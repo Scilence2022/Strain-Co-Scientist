@@ -3,7 +3,6 @@ import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { generationPrompt, SYSTEM_PREAMBLE, type GenerationStrategy } from '../prompts'
 import { coerceDesign, toDesignObjects } from './util'
-import { demoGenerateDesigns } from '../demo'
 
 /**
  * Generation agent. Produces an initial set of designs (and later expansions)
@@ -21,19 +20,6 @@ export class GenerationAgent {
     metaFeedback?: string
   ): Promise<StrainDesign[]> {
     const existingTitles = this.ctx.store.getDesigns(campaign.id).map((d) => d.title)
-
-    if (this.ctx.demoMode) {
-      const designs = demoGenerateDesigns(campaign, count, cycle * 7 + strategy.length)
-      designs.forEach((d) => this.ctx.upsertDesign(d))
-      this.ctx.log(
-        campaign.id,
-        'generation',
-        'success',
-        `Generated ${designs.length} designs via ${strategy} strategy`,
-        { strategy }
-      )
-      return designs
-    }
 
     // Literature grounding (best-effort).
     let literature: string | undefined

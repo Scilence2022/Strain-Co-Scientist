@@ -2,7 +2,6 @@ import type { Campaign, Match, StrainDesign } from '@shared/domain'
 import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { matchPrompt, SYSTEM_PREAMBLE } from '../prompts'
-import { demoMatchWinner } from '../demo'
 import { updateElo } from '../tournament/Elo'
 
 /**
@@ -20,9 +19,7 @@ export class RankingAgent {
     mode: 'debate' | 'single-turn',
     cycle: number
   ): Promise<Match> {
-    const decision = this.ctx.demoMode
-      ? demoMatchWinner(a, b)
-      : await this.llmMatch(campaign, a, b, mode)
+    const decision = await this.llmMatch(campaign, a, b, mode)
 
     const aWon = decision.winner === 'A'
     const { newA, newB, delta } = updateElo(a.elo, b.elo, aWon ? 1 : 0)

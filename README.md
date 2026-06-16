@@ -9,7 +9,7 @@ synthesizes concrete strain-design strategies — with a clean, professional
 monitoring & management UI.
 
 > Not a web service. A self-contained desktop workstation that stores everything
-> locally and can run fully offline in **demo mode** (no API key required).
+> locally.
 
 ---
 
@@ -92,23 +92,9 @@ npm run dist         # package an installer (electron-builder)
 npm run typecheck    # tsc for both node and web projects
 ```
 
-By default the app starts in **demo mode**, which synthesizes plausible,
-domain-appropriate content so the entire system and UI are fully exercisable
-without any API key. To use live agents: open **Settings**, add an Anthropic API
-key, and turn demo mode off.
-
-### Headless engine smoke test
-
-A standalone end-to-end check of the multi-agent loop (no GUI):
-
-```bash
-npx esbuild scripts/smoke.ts --bundle --platform=node --format=cjs \
-  --external:electron --alias:@shared=./src/shared --alias:@main=./src/main \
-  --outfile=.smoke.cjs && node .smoke.cjs && rm .smoke.cjs
-```
-
-It runs a full campaign in demo mode and asserts that designs are generated,
-reviewed, ranked (Elo rises above 1200), evolved, clustered, and synthesized.
+The agents call a live LLM. Open **Settings**, add an Anthropic API key (and,
+optionally, the deep-research / CodeXomics MCP servers for grounding) before
+running a campaign.
 
 ## The UI
 
@@ -132,14 +118,13 @@ A left-nav workstation shell with nine views:
 src/
   shared/        domain types, host presets, IPC contract (main <-> renderer)
   main/
-    engine/      Supervisor, TaskQueue, agents/, tournament/, prompts/, demo
+    engine/      Supervisor, TaskQueue, agents/, tournament/, prompts/
     llm/         provider-agnostic client (Anthropic + OpenAI-compatible)
     mcp/         deep-research & CodeXomics MCP wrappers
     memory/      persistent context-memory store
     ipc/         typed ipcMain handlers
   preload/       contextBridge typed `window.api`
   renderer/      React UI (views/, components/, store/, styles/)
-scripts/smoke.ts headless engine end-to-end test
 ```
 
 ## Notes & scope
@@ -148,6 +133,6 @@ scripts/smoke.ts headless engine end-to-end test
 end-to-end** — all seven roles, the async queue, the Elo tournament, persistent
 memory, MCP grounding, and the full monitoring UI — adapted for strain
 engineering. Prompts are faithful adaptations of the paper's strategies rather
-than a line-for-line reproduction of every supplementary-note prompt. Live
-literature/genomic grounding requires the user's deep-research and CodeXomics
-servers plus an Anthropic key; otherwise the system runs in demo mode.
+than a line-for-line reproduction of every supplementary-note prompt. The agents
+require an Anthropic key; live literature/genomic grounding additionally requires
+the user's deep-research and CodeXomics servers.

@@ -17,7 +17,7 @@ export function TopBar(): JSX.Element {
 
   const mcpOn =
     (settings?.mcp.deepResearch.enabled ? 1 : 0) + (settings?.mcp.codexomics.enabled ? 1 : 0)
-  const demo = settings?.run.demoMode || !settings?.llm.apiKey
+  const hasApiKey = !!settings?.llm.apiKey
 
   return (
     <header className="topbar">
@@ -67,8 +67,8 @@ export function TopBar(): JSX.Element {
 
       {status && <CampaignStatusPill status={status} />}
 
-      <span className="badge" title="Engine mode">
-        {demo ? 'Demo mode' : 'Live LLM'}
+      <span className="badge" title={hasApiKey ? 'LLM configured' : 'Add an API key in Settings'}>
+        {hasApiKey ? 'Live LLM' : 'No API key'}
       </span>
       <span className="badge" title="MCP servers enabled">
         MCP {mcpOn}/2

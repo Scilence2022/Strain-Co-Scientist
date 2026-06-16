@@ -138,19 +138,10 @@ export function Settings(): JSX.Element {
       {/* Run */}
       <div className="card pad-lg">
         <div className="card-title" style={{ marginBottom: 14 }}>Engine</div>
-        <div className="grid grid-2">
-          <div className="field">
-            <label>Worker concurrency</label>
-            <input type="number" min={1} max={8} value={draft.run.concurrency} onChange={(e) => patch((d) => (d.run.concurrency = +e.target.value))} />
-            <span className="hint">Max simultaneous agent tasks.</span>
-          </div>
-          <div className="field" style={{ justifyContent: 'flex-end' }}>
-            <label className="checkbox-row">
-              <input type="checkbox" checked={draft.run.demoMode} onChange={(e) => patch((d) => (d.run.demoMode = e.target.checked))} />
-              Demo mode (no API calls)
-            </label>
-            <span className="hint">Synthesises plausible content so the system runs fully offline.</span>
-          </div>
+        <div className="field">
+          <label>Worker concurrency</label>
+          <input type="number" min={1} max={8} value={draft.run.concurrency} onChange={(e) => patch((d) => (d.run.concurrency = +e.target.value))} />
+          <span className="hint">Max simultaneous agent tasks.</span>
         </div>
         <label className="checkbox-row" style={{ marginTop: 6 }}>
           <input type="checkbox" checked={draft.safety.enforceBiosafety} onChange={(e) => patch((d) => (d.safety.enforceBiosafety = e.target.checked))} />

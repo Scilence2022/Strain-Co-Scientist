@@ -3,7 +3,6 @@ import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { reviewPrompt, SYSTEM_PREAMBLE } from '../prompts'
 import { clampScore } from './util'
-import { demoReview } from '../demo'
 
 /**
  * Reflection agent — the scientific peer reviewer. Implements the paper's
@@ -19,9 +18,7 @@ export class ReflectionAgent {
     type: ReviewType,
     metaFeedback?: string
   ): Promise<Review> {
-    const review = this.ctx.demoMode
-      ? await this.demo(campaign, design, type)
-      : await this.llmReview(campaign, design, type, metaFeedback)
+    const review = await this.llmReview(campaign, design, type, metaFeedback)
 
     // Persist review + bump the design's review count.
     this.ctx.addReview(review)
@@ -38,15 +35,6 @@ export class ReflectionAgent {
       { designId: design.id, type }
     )
     return review
-  }
-
-  private async demo(
-    campaign: Campaign,
-    design: StrainDesign,
-    type: ReviewType
-  ): Promise<Review> {
-    const partial = demoReview(campaign, design, type, design.id.length + type.length)
-    return { id: this.ctx.newId(), createdAt: Date.now(), ...partial }
   }
 
   private async llmReview(

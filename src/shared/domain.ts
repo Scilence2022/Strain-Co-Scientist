@@ -531,8 +531,6 @@ export interface AppSettings {
   run: {
     /** Max concurrent worker tasks. */
     concurrency: number
-    /** Demo mode synthesises plausible outputs without calling the LLM. */
-    demoMode: boolean
   }
   safety: {
     /** Hard gate: reject designs that fail the safety criterion. */
@@ -558,8 +556,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     codexomics: { enabled: false, url: 'http://localhost:3002' }
   },
   run: {
-    concurrency: 3,
-    demoMode: true
+    concurrency: 3
   },
   safety: {
     enforceBiosafety: true

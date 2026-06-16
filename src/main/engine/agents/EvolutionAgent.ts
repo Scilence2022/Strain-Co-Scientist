@@ -3,7 +3,6 @@ import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { evolutionPrompt, SYSTEM_PREAMBLE } from '../prompts'
 import { coerceDesign } from './util'
-import { demoEvolveDesign } from '../demo'
 
 /**
  * Evolution agent. Refines top designs by producing NEW designs (it never
@@ -24,34 +23,30 @@ export class EvolutionAgent {
 
     let child: StrainDesign | null
     let failureMeta: Record<string, unknown> = { strategy }
-    if (this.ctx.demoMode) {
-      child = demoEvolveDesign(campaign, parents, strategy, cycle * 13)
+    let literature: string | undefined
+    if (strategy === 'grounding-enhancement' && this.ctx.deepResearch.available) {
+      const finding = await this.ctx.deepResearch.search([
+        { query: `improve ${parents[0].title} ${campaign.productTarget}`, researchGoal: campaign.goal }
+      ])
+      if (finding) literature = finding.summary
+    }
+    const res = await this.ctx.llm.complete({
+      agent: 'evolution',
+      system: SYSTEM_PREAMBLE,
+      prompt: evolutionPrompt(campaign, parents, strategy, { literature, metaFeedback }),
+      effort: 'medium',
+      think: true,
+      maxTokens: 4000
+    })
+    child = coerceDesign(parseJsonLoose<any>(res.text), campaign, 'evolved', () => this.ctx.newId())
+    if (child) {
+      child.lineage = { parentIds: parents.map((p) => p.id), strategy }
     } else {
-      let literature: string | undefined
-      if (strategy === 'grounding-enhancement' && this.ctx.deepResearch.available) {
-        const finding = await this.ctx.deepResearch.search([
-          { query: `improve ${parents[0].title} ${campaign.productTarget}`, researchGoal: campaign.goal }
-        ])
-        if (finding) literature = finding.summary
-      }
-      const res = await this.ctx.llm.complete({
-        agent: 'evolution',
-        system: SYSTEM_PREAMBLE,
-        prompt: evolutionPrompt(campaign, parents, strategy, { literature, metaFeedback }),
-        effort: 'medium',
-        think: true,
-        maxTokens: 4000
-      })
-      child = coerceDesign(parseJsonLoose<any>(res.text), campaign, 'evolved', () => this.ctx.newId())
-      if (child) {
-        child.lineage = { parentIds: parents.map((p) => p.id), strategy }
-      } else {
-        failureMeta = {
-          strategy,
-          stopReason: res.stopReason,
-          outputTokens: res.usage.outputTokens,
-          rawSnippet: res.text.slice(0, 400)
-        }
+      failureMeta = {
+        strategy,
+        stopReason: res.stopReason,
+        outputTokens: res.usage.outputTokens,
+        rawSnippet: res.text.slice(0, 400)
       }
     }
 

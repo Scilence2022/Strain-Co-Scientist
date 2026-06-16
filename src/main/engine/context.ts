@@ -31,10 +31,6 @@ export class EngineContext {
     private emitter: (event: EngineEvent) => void
   ) {}
 
-  get demoMode(): boolean {
-    return this.settings.run.demoMode || !this.settings.llm.apiKey
-  }
-
   emit(event: EngineEvent): void {
     this.emitter(event)
   }

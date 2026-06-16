@@ -70,60 +70,38 @@ export class Supervisor {
 
   async parseGoal(campaign: Campaign): Promise<void> {
     this.ctx.log(campaign.id, 'supervisor', 'info', 'Parsing research goal into a plan configuration')
-    if (this.ctx.demoMode) {
+    try {
+      const res = await this.ctx.llm.complete({
+        agent: 'supervisor',
+        system: SYSTEM_PREAMBLE,
+        prompt: parseGoalPrompt(campaign),
+        effort: 'medium',
+        maxTokens: 2000
+      })
+      const parsed = parseJsonLoose<any>(res.text) ?? {}
       campaign.researchPlan = {
-        restatedGoal: `Engineer ${campaign.host.preset} to ${campaign.objective.replace('-', ' ')} for ${campaign.productTarget}.`,
-        focusAreas: [
-          'Bottleneck / rate-limiting step relief',
-          'Byproduct pathway elimination',
-          'Cofactor & redox balancing',
-          'Dynamic / staged pathway control',
-          'Transport & product export',
-          'Heterologous high-flux routes'
-        ],
-        derivedConstraints: [
-          `Use only the available tools: ${campaign.constraints.availableTools.join(', ') || 'standard toolkit'}.`,
-          `Respect biosafety level ${campaign.constraints.biosafety}.`
-        ],
-        evaluationRubric:
-          'High-quality designs relieve a real bottleneck with a clear mechanism, are genetically tractable in the host, balance redox/burden, and are testable in a standard DBTL screen.',
-        recommendedChassis: campaign.host.preset === 'agnostic' ? 'E. coli (broad toolkit, fast iteration)' : '',
+        restatedGoal: String(parsed.restatedGoal ?? campaign.goal),
+        focusAreas: Array.isArray(parsed.focusAreas) ? parsed.focusAreas.map(String) : [],
+        derivedConstraints: Array.isArray(parsed.derivedConstraints)
+          ? parsed.derivedConstraints.map(String)
+          : [],
+        evaluationRubric: String(parsed.evaluationRubric ?? ''),
+        recommendedChassis: String(parsed.recommendedChassis ?? ''),
         parsedAt: Date.now()
       }
-    } else {
-      try {
-        const res = await this.ctx.llm.complete({
-          agent: 'supervisor',
-          system: SYSTEM_PREAMBLE,
-          prompt: parseGoalPrompt(campaign),
-          effort: 'medium',
-          maxTokens: 2000
-        })
-        const parsed = parseJsonLoose<any>(res.text) ?? {}
-        campaign.researchPlan = {
-          restatedGoal: String(parsed.restatedGoal ?? campaign.goal),
-          focusAreas: Array.isArray(parsed.focusAreas) ? parsed.focusAreas.map(String) : [],
-          derivedConstraints: Array.isArray(parsed.derivedConstraints)
-            ? parsed.derivedConstraints.map(String)
-            : [],
-          evaluationRubric: String(parsed.evaluationRubric ?? ''),
-          recommendedChassis: String(parsed.recommendedChassis ?? ''),
-          parsedAt: Date.now()
-        }
-      } catch (err) {
-        this.ctx.log(
-          campaign.id,
-          'supervisor',
-          'warning',
-          `Goal parsing failed, using defaults: ${err instanceof Error ? err.message : String(err)}`
-        )
-        campaign.researchPlan = {
-          restatedGoal: campaign.goal,
-          focusAreas: [],
-          derivedConstraints: [],
-          evaluationRubric: '',
-          parsedAt: Date.now()
-        }
+    } catch (err) {
+      this.ctx.log(
+        campaign.id,
+        'supervisor',
+        'warning',
+        `Goal parsing failed, using defaults: ${err instanceof Error ? err.message : String(err)}`
+      )
+      campaign.researchPlan = {
+        restatedGoal: campaign.goal,
+        focusAreas: [],
+        derivedConstraints: [],
+        evaluationRubric: '',
+        parsedAt: Date.now()
       }
     }
     campaign.updatedAt = Date.now()
@@ -169,9 +147,6 @@ export class Supervisor {
         await this.finalize(after, cycle)
         return 'completed'
       }
-
-      // Pace the loop so the UI streams updates and pause stays responsive.
-      await delay(this.ctx.demoMode ? 220 : 0)
     }
   }
 
@@ -371,7 +346,7 @@ export class Supervisor {
 
   private async augmentConstructs(campaign: Campaign, design: StrainDesign): Promise<void> {
     const target = design.interventions.flatMap((i) => i.targets)[0] ?? design.title
-    if (this.ctx.demoMode || !this.ctx.codexomics.available) {
+    if (!this.ctx.codexomics.available) {
       design.constructSuggestions = [
         {
           label: `Forward primer for ${target}`,
@@ -503,10 +478,6 @@ export class Supervisor {
     this.recordStatistics(campaign, cycle)
     this.ctx.log(campaign.id, 'supervisor', 'success', `Campaign reached terminal state after ${cycle} cycles`)
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms))
 }
 
 function truncate(s: string, n = 40): string {
