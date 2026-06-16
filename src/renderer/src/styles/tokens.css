@@ -94,10 +94,10 @@
   --border-strong: #c2ccd5;
   --border-subtle: #e9edf1;
 
-  /* Text */
-  --text: #18222c;
-  --text-muted: #51616f;
-  --text-faint: #7a8693;
+  /* Text — kept dark for strong contrast on bright surfaces */
+  --text: #15202b;
+  --text-muted: #3c4a57;
+  --text-faint: #5c6b78;
   --text-inverse: #ffffff;
 
   /* Accent — same muted teal, tuned for white backgrounds */

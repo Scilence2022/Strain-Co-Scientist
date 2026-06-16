@@ -160,11 +160,12 @@ export function ProximityGraph({
   }
 
   const onPointerDown = (e: React.PointerEvent) => {
-    // Only the background pans; ignore the right button.
+    // Only the background pans; ignore the right button. We deliberately do
+    // NOT capture the pointer here — capturing on pointerdown would retarget
+    // the trailing `click` to the <svg>, swallowing node clicks. Capture is
+    // taken only once an actual drag begins (see onPointerMove).
     if (e.button !== 0) return
     drag.current = { px: e.clientX, py: e.clientY, moved: false }
-    setGrabbing(true)
-    ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -172,16 +173,25 @@ export function ProximityGraph({
     if (!d) return
     const rect = svgRef.current?.getBoundingClientRect()
     if (!rect) return
+    if (!d.moved && Math.abs(e.clientX - d.px) + Math.abs(e.clientY - d.py) > 3) {
+      d.moved = true
+      setGrabbing(true)
+      try {
+        ;(e.currentTarget as Element).setPointerCapture(e.pointerId)
+      } catch {
+        /* capture unsupported / already active */
+      }
+    }
+    if (!d.moved) return
     const dx = ((e.clientX - d.px) / rect.width) * W
     const dy = ((e.clientY - d.py) / rect.height) * H
-    if (Math.abs(e.clientX - d.px) + Math.abs(e.clientY - d.py) > 3) d.moved = true
     d.px = e.clientX
     d.py = e.clientY
     setTf((t) => ({ ...t, x: t.x + dx, y: t.y + dy }))
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
-    if (drag.current) {
+    if (drag.current?.moved) {
       try {
         ;(e.currentTarget as Element).releasePointerCapture(e.pointerId)
       } catch {
