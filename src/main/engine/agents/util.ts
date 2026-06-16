@@ -41,6 +41,25 @@ function coercePlan(raw: any): DBTLStep[] {
   }))
 }
 
+/**
+ * Normalise a loosely-parsed generation payload into an array of design
+ * objects. Accepts a bare array, a single design object, or a common wrapper
+ * the model sometimes emits despite being asked for a bare array
+ * (`{ designs|strategies|results|items|data: [...] }`). Without this, a wrapped
+ * array parsed to a single object with no `title` and silently yielded zero
+ * designs.
+ */
+export function toDesignObjects(parsed: any): any[] {
+  if (Array.isArray(parsed)) return parsed
+  if (parsed && typeof parsed === 'object') {
+    for (const key of ['designs', 'strategies', 'results', 'items', 'data']) {
+      if (Array.isArray(parsed[key])) return parsed[key]
+    }
+    return [parsed] // treat as a single design (coerceDesign rejects it if untitled)
+  }
+  return []
+}
+
 /** Build a StrainDesign from a loosely-parsed LLM object. */
 export function coerceDesign(
   obj: any,

@@ -2,7 +2,7 @@ import type { Campaign, StrainDesign } from '@shared/domain'
 import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { generationPrompt, SYSTEM_PREAMBLE, type GenerationStrategy } from '../prompts'
-import { coerceDesign } from './util'
+import { coerceDesign, toDesignObjects } from './util'
 import { demoGenerateDesigns } from '../demo'
 
 /**
@@ -67,8 +67,7 @@ export class GenerationAgent {
       maxTokens: Math.max(16000, count * 3000 + 4000)
     })
 
-    const parsed = parseJsonLoose<any[]>(res.text)
-    const list = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
+    const list = toDesignObjects(parseJsonLoose<any>(res.text))
     const designs = list
       .map((o) => coerceDesign(o, campaign, 'generated', () => this.ctx.newId()))
       .filter((d): d is StrainDesign => !!d)
