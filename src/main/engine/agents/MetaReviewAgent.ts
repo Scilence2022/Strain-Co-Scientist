@@ -3,6 +3,11 @@ import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { metaReviewPrompt, SYSTEM_PREAMBLE } from '../prompts'
 
+/** True when a meta-review carries no usable research overview (parse/content failure). */
+export function isEmptyOverview(meta: MetaReview): boolean {
+  return !meta.overview.summary.trim() && meta.overview.areas.length === 0
+}
+
 /**
  * Meta-review agent. Synthesises recurring critique patterns into feedback
  * appended to other agents' prompts (improvement without backprop), and at the
@@ -11,7 +16,8 @@ import { metaReviewPrompt, SYSTEM_PREAMBLE } from '../prompts'
 export class MetaReviewAgent {
   constructor(private ctx: EngineContext) {}
 
-  async synthesize(campaign: Campaign, cycle: number): Promise<MetaReview> {
+  /** Build a meta-review from the campaign state without persisting it. */
+  async generate(campaign: Campaign, cycle: number): Promise<MetaReview> {
     const snapshot = this.ctx.store.getSnapshot(campaign.id)
     const designs = (snapshot?.designs ?? []).filter((d) => d.status !== 'rejected')
     const top = [...designs].sort((a, b) => b.elo - a.elo).slice(0, 8)
@@ -19,9 +25,11 @@ export class MetaReviewAgent {
       .slice(-30)
       .map((r) => `[${r.type}/${r.verdict}] ${r.narrative}`)
     const matchPatterns = (snapshot?.matches ?? []).slice(-30).map((m) => m.rationale)
+    return this.llm(campaign, cycle, top, reviewExcerpts, matchPatterns)
+  }
 
-    const meta = await this.llm(campaign, cycle, top, reviewExcerpts, matchPatterns)
-
+  async synthesize(campaign: Campaign, cycle: number): Promise<MetaReview> {
+    const meta = await this.generate(campaign, cycle)
     this.ctx.addMetaReview(meta)
     this.ctx.log(
       campaign.id,

@@ -57,12 +57,23 @@ export function OriginBadge({ origin }: { origin: string }): JSX.Element {
   return <span className={`badge ${map[origin] ?? ''}`}>{label}</span>
 }
 
-export function Empty({ title, hint, icon }: { title: string; hint?: string; icon?: JSX.Element }): JSX.Element {
+export function Empty({
+  title,
+  hint,
+  icon,
+  action
+}: {
+  title: string
+  hint?: string
+  icon?: JSX.Element
+  action?: JSX.Element
+}): JSX.Element {
   return (
     <div className="empty">
       {icon}
       <div style={{ fontSize: 'var(--fs-md)', color: 'var(--text-muted)' }}>{title}</div>
       {hint && <div style={{ maxWidth: 420 }}>{hint}</div>}
+      {action && <div style={{ marginTop: 4 }}>{action}</div>}
     </div>
   )
 }

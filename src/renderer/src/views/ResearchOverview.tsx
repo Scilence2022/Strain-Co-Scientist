@@ -1,13 +1,32 @@
+import { useState } from 'react'
 import { useStore } from '../store/useStore'
 import { Empty } from '../components/ui'
-import { IconOverview } from '../components/Icons'
+import { IconOverview, IconRefresh } from '../components/Icons'
 
 export function ResearchOverview(): JSX.Element {
-  const { snapshot, openDesign, setView } = useStore()
+  const { snapshot, selectedId, openDesign, setView } = useStore()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
   if (!snapshot) return <div className="page"><Empty icon={<IconOverview size={36} />} title="No campaign selected" /></div>
 
-  const meta = snapshot.metaReviews[snapshot.metaReviews.length - 1]
+  const latest = snapshot.metaReviews[snapshot.metaReviews.length - 1]
+  // A meta-review record can exist with an empty overview (e.g. an LLM parse
+  // failure at end-of-run). Treat that as "not generated" so the scientist can
+  // retry, rather than showing a blank card.
+  const meta = latest && (latest.overview.summary.trim() || latest.overview.areas.length > 0) ? latest : undefined
   const designTitle = (id: string) => snapshot.designs.find((d) => d.id === id)?.title
+
+  const generate = async () => {
+    if (!selectedId) return
+    setBusy(true)
+    setError(null)
+    const res = await window.api.regenerateOverview(selectedId)
+    setBusy(false)
+    if (!res.ok) setError(res.message)
+    // On success the new meta-review streams in via the engine event and the
+    // view re-renders automatically.
+  }
 
   if (!meta) {
     return (
@@ -15,7 +34,15 @@ export function ResearchOverview(): JSX.Element {
         <Empty
           icon={<IconOverview size={36} />}
           title="No research overview yet"
-          hint="The Meta-review agent synthesises a DBTL roadmap from the campaign's reviews and tournament once enough designs have been evaluated. Run the campaign to generate it."
+          hint="The Meta-review agent synthesises a DBTL roadmap from the campaign's reviews and tournament. It runs automatically at the end of a campaign — or generate it now from the current state."
+          action={
+            <div className="col gap-sm" style={{ alignItems: 'center' }}>
+              <button className="btn btn-primary" onClick={generate} disabled={busy}>
+                <IconRefresh size={14} /> {busy ? 'Generating…' : 'Generate research overview'}
+              </button>
+              {error && <div className="badge err">{error}</div>}
+            </div>
+          }
         />
       </div>
     )
@@ -23,12 +50,19 @@ export function ResearchOverview(): JSX.Element {
 
   return (
     <div className="page page-narrow col gap-lg">
-      <div>
-        <h2 style={{ fontSize: 'var(--fs-xl)', marginBottom: 6 }}>Research overview</h2>
-        <div className="faint" style={{ fontSize: 'var(--fs-sm)' }}>
-          Synthesised by the Meta-review agent · cycle {meta.cycle}
+      <div className="row">
+        <div>
+          <h2 style={{ fontSize: 'var(--fs-xl)', marginBottom: 6 }}>Research overview</h2>
+          <div className="faint" style={{ fontSize: 'var(--fs-sm)' }}>
+            Synthesised by the Meta-review agent · cycle {meta.cycle}
+          </div>
         </div>
+        <span className="spacer" />
+        <button className="btn btn-sm" onClick={generate} disabled={busy} title="Re-synthesise from the current campaign state">
+          <IconRefresh size={13} /> {busy ? 'Regenerating…' : 'Regenerate'}
+        </button>
       </div>
+      {error && <div className="badge err" style={{ alignSelf: 'flex-start' }}>{error}</div>}
 
       <div className="card pad-lg">
         <div className="section-title">Executive summary</div>

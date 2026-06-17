@@ -58,6 +58,12 @@ export interface LlmPingResult {
   model?: string
 }
 
+/** Result of a manual research-overview (re)generation. */
+export interface OverviewGenResult {
+  ok: boolean
+  message: string
+}
+
 /** Invoke channels: renderer → main, request/response. */
 export interface IpcApi {
   // Settings
@@ -65,6 +71,9 @@ export interface IpcApi {
   saveSettings(settings: AppSettings): Promise<AppSettings>
   testMcp(server: 'deepResearch' | 'codexomics'): Promise<McpTestResult>
   pingLlm(): Promise<LlmPingResult>
+
+  // Research overview
+  regenerateOverview(campaignId: string): Promise<OverviewGenResult>
 
   // Campaign lifecycle
   listCampaigns(): Promise<Campaign[]>

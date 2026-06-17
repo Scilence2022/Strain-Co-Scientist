@@ -53,9 +53,15 @@ function Logo(): JSX.Element {
   return (
     <svg className="brand-logo" viewBox="0 0 24 24" fill="none">
       <circle cx="12" cy="12" r="10" stroke="var(--accent)" strokeWidth="1.5" />
-      <path d="M8 14c2-3 6-3 8 0" stroke="var(--accent-strong)" strokeWidth="1.5" strokeLinecap="round" />
-      <circle cx="9" cy="9" r="1.4" fill="var(--accent-strong)" />
-      <circle cx="15" cy="9" r="1.4" fill="var(--accent-strong)" />
+      {/* upturned mouth → smile */}
+      <path
+        d="M8 13.5c1.6 2.5 6.4 2.5 8 0"
+        stroke="var(--accent-strong)"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <circle cx="9" cy="9.5" r="1.4" fill="var(--accent-strong)" />
+      <circle cx="15" cy="9.5" r="1.4" fill="var(--accent-strong)" />
     </svg>
   )
 }

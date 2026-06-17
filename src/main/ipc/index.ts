@@ -14,6 +14,8 @@ export function registerIpc(engine: Engine): void {
     testMcp: (server) => engine.testMcp(server),
     pingLlm: () => engine.pingLlm(),
 
+    regenerateOverview: (id) => engine.regenerateOverview(id),
+
     listCampaigns: () => engine.listCampaigns(),
     createCampaign: (input) => engine.createCampaign(input),
     deleteCampaign: (id) => engine.deleteCampaign(id),

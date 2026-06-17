@@ -11,6 +11,8 @@ const api: PreloadBridge = {
   testMcp: (server) => ipcRenderer.invoke('testMcp', server),
   pingLlm: () => ipcRenderer.invoke('pingLlm'),
 
+  regenerateOverview: (id) => ipcRenderer.invoke('regenerateOverview', id),
+
   listCampaigns: () => ipcRenderer.invoke('listCampaigns'),
   createCampaign: (input) => ipcRenderer.invoke('createCampaign', input),
   deleteCampaign: (id) => ipcRenderer.invoke('deleteCampaign', id),

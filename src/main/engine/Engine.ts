@@ -23,6 +23,7 @@ import { DeepResearchClient } from '../mcp/DeepResearchClient'
 import { CodexomicsClient } from '../mcp/CodexomicsClient'
 import { EngineContext } from './context'
 import { Supervisor } from './Supervisor'
+import { MetaReviewAgent, isEmptyOverview } from './agents/MetaReviewAgent'
 import { INITIAL_ELO } from './tournament/Elo'
 
 /**
@@ -180,6 +181,48 @@ export class Engine {
     } finally {
       this.running.delete(id)
       await this.store.flush()
+    }
+  }
+
+  // -- Research overview ----------------------------------------------------
+
+  /**
+   * Manually (re)synthesise the research overview for a campaign. Used when the
+   * automatic end-of-run meta-review didn't produce usable content (e.g. an LLM
+   * parse failure). Only persists a result that actually contains an overview,
+   * so a failed retry never overwrites a good one with a blank card.
+   */
+  async regenerateOverview(id: string): Promise<{ ok: boolean; message: string }> {
+    const campaign = this.store.getCampaign(id)
+    if (!campaign) return { ok: false, message: 'Campaign not found' }
+    const snapshot = this.store.getSnapshot(id)
+    const designs = (snapshot?.designs ?? []).filter((d) => d.status !== 'rejected')
+    if (designs.length === 0) {
+      return { ok: false, message: 'No designs to synthesise an overview from yet.' }
+    }
+    const stats = snapshot?.statistics ?? []
+    const cycle = stats.length ? stats[stats.length - 1].cycle : 0
+    try {
+      const meta = await new MetaReviewAgent(this.ctx).generate(campaign, cycle)
+      if (isEmptyOverview(meta)) {
+        this.ctx.log(id, 'meta-review', 'warning', 'Manual overview generation returned no usable content')
+        return {
+          ok: false,
+          message: 'The model returned no usable overview. Try again, or check the LLM connection in Settings.'
+        }
+      }
+      this.ctx.addMetaReview(meta)
+      this.ctx.log(
+        id,
+        'meta-review',
+        'success',
+        `Research overview generated on request: ${meta.overview.areas.length} roadmap areas`
+      )
+      return { ok: true, message: `Generated ${meta.overview.areas.length} roadmap areas.` }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.ctx.log(id, 'meta-review', 'error', `Manual overview generation failed: ${message}`)
+      return { ok: false, message }
     }
   }
 
