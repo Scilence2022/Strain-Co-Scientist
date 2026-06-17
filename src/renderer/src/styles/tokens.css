@@ -72,7 +72,7 @@
   --node-stroke-selected: #ffffff;
   --scrim: rgba(6, 10, 14, 0.55);
   /* Subtle wash behind the proximity map so it reads as its own surface. */
-  --graph-bg: rgba(255, 255, 255, 0.035);
+  --graph-bg: #e8edf2;
 
   --sidebar-w: 216px;
   --topbar-h: 52px;
