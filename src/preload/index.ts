@@ -17,6 +17,7 @@ const api: PreloadBridge = {
   createCampaign: (input) => ipcRenderer.invoke('createCampaign', input),
   deleteCampaign: (id) => ipcRenderer.invoke('deleteCampaign', id),
   getSnapshot: (id) => ipcRenderer.invoke('getSnapshot', id),
+  updateTournamentConfig: (id, config) => ipcRenderer.invoke('updateTournamentConfig', id, config),
 
   startCampaign: (id) => ipcRenderer.invoke('startCampaign', id),
   pauseCampaign: (id) => ipcRenderer.invoke('pauseCampaign', id),

@@ -1,11 +1,27 @@
-import type { Campaign, Match, StrainDesign } from '@shared/domain'
+import type {
+  Campaign,
+  CriteriaWeights,
+  CriterionKey,
+  Match,
+  StrainDesign,
+  TournamentConfig
+} from '@shared/domain'
+import { CRITERIA_KEYS, DEFAULT_TOURNAMENT_CONFIG } from '@shared/domain'
 import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { matchPrompt, SYSTEM_PREAMBLE } from '../prompts'
-import { updateElo } from '../tournament/Elo'
+import { updateElo, weightedTotal } from '../tournament/Elo'
+
+type Scores = Partial<Record<CriterionKey, number>>
 
 /**
  * Ranking agent — runs Elo tournament matches via pairwise scientific debate.
+ * The judge scores BOTH designs across the campaign's weighted criteria; the
+ * winner is the higher weighted total (not an opaque single pick), so the
+ * scientist's priorities — e.g. effectiveness over novelty — actually steer the
+ * ladder. The per-design sub-scores are persisted on the Match so the ladder
+ * can be replayed under new weights without re-running the match.
+ *
  * Top designs get multi-turn debates; lower-ranked ones get single-turn
  * comparisons (matching the paper's optimisation).
  */
@@ -19,10 +35,14 @@ export class RankingAgent {
     mode: 'debate' | 'single-turn',
     cycle: number
   ): Promise<Match> {
-    const decision = await this.llmMatch(campaign, a, b, mode)
+    const cfg = campaign.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
+    const decision = await this.llmMatch(campaign, a, b, mode, cfg)
 
-    const aWon = decision.winner === 'A'
-    const { newA, newB, delta } = updateElo(a.elo, b.elo, aWon ? 1 : 0)
+    const totalA = weightedTotal(decision.scoresA, cfg.weights)
+    const totalB = weightedTotal(decision.scoresB, cfg.weights)
+    const { aWon, scoreA } = decide(totalA, totalB, a.elo, b.elo, cfg.tieHandling)
+
+    const { newA, newB, delta } = updateElo(a.elo, b.elo, scoreA, cfg.kFactor)
 
     a.elo = newA
     b.elo = newB
@@ -50,14 +70,18 @@ export class RankingAgent {
       mode,
       transcript: decision.transcript,
       rationale: decision.rationale,
-      eloDelta: delta
+      eloDelta: delta,
+      scoresA: decision.scoresA,
+      scoresB: decision.scoresB,
+      weightedTotalA: Math.round(totalA * 10) / 10,
+      weightedTotalB: Math.round(totalB * 10) / 10
     }
     this.ctx.addMatch(match)
     this.ctx.log(
       campaign.id,
       'ranking',
       'info',
-      `Match: "${a.title}" vs "${b.title}" → ${aWon ? a.title : b.title} (Δ${delta})`,
+      `Match: "${a.title}" vs "${b.title}" → ${aWon ? a.title : b.title} (${totalA.toFixed(0)} vs ${totalB.toFixed(0)}, Δ${delta})`,
       { matchId: match.id }
     )
     return match
@@ -67,22 +91,61 @@ export class RankingAgent {
     campaign: Campaign,
     a: StrainDesign,
     b: StrainDesign,
-    mode: 'debate' | 'single-turn'
-  ): Promise<{ winner: 'A' | 'B'; transcript: string; rationale: string }> {
+    mode: 'debate' | 'single-turn',
+    cfg: TournamentConfig
+  ): Promise<{ scoresA: Scores; scoresB: Scores; transcript: string; rationale: string }> {
+    // Cancel positional bias by randomising which design is presented first,
+    // then mapping the judge's scoresA/scoresB back to the real A/B.
+    const swap = cfg.randomizeOrder && Math.random() < 0.5
+    const first = swap ? b : a
+    const second = swap ? a : b
     const res = await this.ctx.llm.complete({
       agent: 'ranking',
       system: SYSTEM_PREAMBLE,
-      prompt: matchPrompt(campaign, a, b, mode),
+      prompt: matchPrompt(campaign, first, second, mode),
       effort: mode === 'debate' ? 'medium' : 'low',
       think: mode === 'debate',
       maxTokens: 2000
     })
     const parsed = parseJsonLoose<any>(res.text) ?? {}
-    const winner: 'A' | 'B' = parsed.winner === 'B' ? 'B' : 'A'
+    const sFirst = cleanScores(parsed.scoresA, cfg.weights)
+    const sSecond = cleanScores(parsed.scoresB, cfg.weights)
     return {
-      winner,
+      scoresA: swap ? sSecond : sFirst,
+      scoresB: swap ? sFirst : sSecond,
       transcript: String(parsed.transcript ?? ''),
       rationale: String(parsed.rationale ?? '')
     }
   }
+}
+
+/** Decide the head-to-head outcome from the two weighted totals. */
+function decide(
+  totalA: number,
+  totalB: number,
+  eloA: number,
+  eloB: number,
+  tieHandling: TournamentConfig['tieHandling']
+): { aWon: boolean; scoreA: number } {
+  if (totalA === totalB) {
+    const aWon = eloA >= eloB
+    return { aWon, scoreA: tieHandling === 'draw' ? 0.5 : aWon ? 1 : 0 }
+  }
+  const aWon = totalA > totalB
+  return { aWon, scoreA: aWon ? 1 : 0 }
+}
+
+/**
+ * Clamp the judged criteria to integers 0-10, defaulting a judged-but-missing
+ * criterion to 5 so a partial parse never silently zeroes a dimension.
+ * Criteria with weight 0 aren't requested and are left out.
+ */
+function cleanScores(raw: any, weights: CriteriaWeights): Scores {
+  const out: Scores = {}
+  for (const k of CRITERIA_KEYS) {
+    if ((weights[k] ?? 0) <= 0) continue
+    const v = Number(raw?.[k])
+    out[k] = Number.isFinite(v) ? Math.max(0, Math.min(10, Math.round(v))) : 5
+  }
+  return out
 }

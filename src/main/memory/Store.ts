@@ -155,6 +155,11 @@ export class Store {
     return this.cache.get(campaignId)?.designs ?? []
   }
 
+  /** Live (non-cloned) matches for the campaign — used by the Elo replay. */
+  getMatches(campaignId: string): Match[] {
+    return this.cache.get(campaignId)?.matches ?? []
+  }
+
   // -- Reviews / matches / meta-reviews / stats / tasks / events ------------
 
   addReview(review: Review): void {

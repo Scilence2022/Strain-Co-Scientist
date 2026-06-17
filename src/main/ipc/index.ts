@@ -20,6 +20,7 @@ export function registerIpc(engine: Engine): void {
     createCampaign: (input) => engine.createCampaign(input),
     deleteCampaign: (id) => engine.deleteCampaign(id),
     getSnapshot: (id) => engine.getSnapshot(id),
+    updateTournamentConfig: (id, config) => engine.updateTournamentConfig(id, config),
 
     startCampaign: (id) => engine.startCampaign(id),
     pauseCampaign: (id) => engine.pauseCampaign(id),

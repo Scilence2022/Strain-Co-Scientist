@@ -1,4 +1,5 @@
 import type { Campaign, Review, ReviewType, StrainDesign, CriterionKey } from '@shared/domain'
+import { CRITERIA_KEYS } from '@shared/domain'
 import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { reviewPrompt, SYSTEM_PREAMBLE } from '../prompts'
@@ -78,7 +79,7 @@ export class ReflectionAgent {
 
     const parsed = parseJsonLoose<any>(res.text) ?? {}
     const scores: Partial<Record<CriterionKey, number>> = {}
-    for (const key of ['alignment', 'plausibility', 'novelty', 'testability', 'hostCompatibility', 'safety'] as CriterionKey[]) {
+    for (const key of CRITERIA_KEYS) {
       if (parsed.scores && parsed.scores[key] != null) scores[key] = clampScore(parsed.scores[key], 5)
     }
     const verdict: Review['verdict'] = ['pass', 'revise', 'reject'].includes(parsed.verdict)

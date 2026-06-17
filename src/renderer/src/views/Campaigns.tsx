@@ -5,11 +5,13 @@ import { IconPlus, IconClose, IconTrash, IconCampaigns, IconPlay } from '../comp
 import { HOST_PRESET_LIST, hostDisplayName } from '@shared/hosts'
 import {
   DEFAULT_COMPUTE_BUDGET,
-  DEFAULT_CRITERIA_WEIGHTS,
+  DEFAULT_TOURNAMENT_CONFIG,
   type EngineeringObjective,
-  type HostPresetId
+  type HostPresetId,
+  type TournamentConfig
 } from '@shared/domain'
 import type { CreateCampaignInput } from '@shared/ipc'
+import { TournamentConfigEditor } from '../components/TournamentConfigEditor'
 
 const OBJECTIVES: { value: EngineeringObjective; label: string }[] = [
   { value: 'increase-titer', label: 'Increase titer' },
@@ -134,6 +136,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
   const [initialGeneration, setInitialGeneration] = useState(DEFAULT_COMPUTE_BUDGET.initialGeneration)
   const [targetDesigns, setTargetDesigns] = useState(DEFAULT_COMPUTE_BUDGET.targetDesigns)
   const [maxCycles, setMaxCycles] = useState(DEFAULT_COMPUTE_BUDGET.maxCycles)
+  const [tournamentConfig, setTournamentConfig] = useState<TournamentConfig>(DEFAULT_TOURNAMENT_CONFIG)
   const [submitting, setSubmitting] = useState(false)
 
   const valid = productTarget.trim() && goal.trim()
@@ -159,7 +162,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
         onlyNovel
       },
       preferences: preferences.trim(),
-      criteriaWeights: DEFAULT_CRITERIA_WEIGHTS,
+      tournamentConfig,
       computeBudget: { initialGeneration, targetDesigns, maxCycles }
     }
     const campaign = await window.api.createCampaign(input)
@@ -300,6 +303,10 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
               <input type="number" min={4} max={120} value={maxCycles} onChange={(e) => setMaxCycles(+e.target.value)} />
             </div>
           </div>
+
+          <div className="divider" />
+          <div className="section-title">Tournament scoring</div>
+          <TournamentConfigEditor value={tournamentConfig} onChange={setTournamentConfig} />
 
           <div className="field">
             <label>Campaign title (optional)</label>
