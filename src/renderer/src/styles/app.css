@@ -173,6 +173,12 @@ body.is-resizing {
   background: var(--bg-hover);
   color: var(--text);
 }
+/* Light mode: muted gray reads as faded on white, so use the near-black
+   primary text with a touch more weight for legible inactive items. */
+:root[data-theme='light'] .nav-item {
+  color: var(--text);
+  font-weight: 500;
+}
 .nav-item.active {
   background: var(--accent-wash);
   color: var(--accent-strong);
