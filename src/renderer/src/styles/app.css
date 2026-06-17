@@ -746,6 +746,106 @@ textarea {
 .graph-wrap {
   position: relative;
 }
+.graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 0 2px 10px;
+}
+.graph-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.graph-tool-label {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.graph-seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.graph-seg button {
+  width: 30px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  border: none;
+  border-left: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.graph-seg button:first-child {
+  border-left: none;
+}
+.graph-seg button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.graph-seg button.on {
+  background: var(--accent-wash);
+  color: var(--accent-strong);
+}
+.graph-range {
+  width: 100px;
+  accent-color: var(--accent-strong);
+  cursor: pointer;
+}
+.graph-select {
+  height: 26px;
+  background: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  padding: 0 8px;
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.graph-color {
+  width: 30px;
+  height: 26px;
+  padding: 2px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.graph-color::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.graph-color::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+.graph-reset {
+  width: 24px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.graph-reset:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
 .graph-canvas {
   display: block;
   width: 100%;
