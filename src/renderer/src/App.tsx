@@ -31,8 +31,7 @@ export const NAV: { key: ViewKey; label: string; icon: (p: { size?: number }) =>
   { key: 'proximity', label: 'Proximity map', icon: IconGraph },
   { key: 'overview', label: 'Research overview', icon: IconOverview },
   { key: 'expert', label: 'Expert-in-the-loop', icon: IconExpert },
-  { key: 'log', label: 'Activity log', icon: IconLog },
-  { key: 'settings', label: 'Settings', icon: IconSettings }
+  { key: 'log', label: 'Activity log', icon: IconLog }
 ]
 
 const SIDEBAR_MIN = 180

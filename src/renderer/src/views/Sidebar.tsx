@@ -1,5 +1,6 @@
 import { useStore } from '../store/useStore'
 import { NAV } from '../App'
+import { IconSettings } from '../components/Icons'
 
 export function Sidebar(): JSX.Element {
   const { view, setView, snapshot, openDesign } = useStore()
@@ -42,7 +43,15 @@ export function Sidebar(): JSX.Element {
           )
         })}
       </nav>
-      <div style={{ padding: '10px 14px', borderTop: '1px solid var(--border-subtle)', fontSize: 'var(--fs-xs)', color: 'var(--text-faint)' }}>
+      <div
+        className={`nav-item ${view === 'settings' ? 'active' : ''}`}
+        style={{ margin: '0 8px', borderTop: '1px solid var(--border-subtle)', borderRadius: 0, paddingTop: 10 }}
+        onClick={() => { openDesign(null); setView('settings') }}
+      >
+        <IconSettings size={16} />
+        <span>Settings</span>
+      </div>
+      <div style={{ padding: '8px 14px 10px', fontSize: 'var(--fs-xs)', color: 'var(--text-faint)' }}>
         Multi-agent engine · v0.1.0
       </div>
     </aside>
