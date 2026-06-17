@@ -68,30 +68,45 @@ export class MetaReviewAgent {
       prompt: metaReviewPrompt(campaign, top, reviewExcerpts, matchPatterns),
       effort: 'high',
       think: true,
-      maxTokens: 5000
+      // The overview is a large structured object; with adaptive thinking the
+      // old 5K ceiling was routinely exhausted before the JSON closed, leaving
+      // an unparseable (truncated) response. Give it ample room — the client
+      // clamps this to the model's real max-output anyway.
+      maxTokens: 16000
     })
-    const parsed = parseJsonLoose<any>(res.text) ?? {}
+    const parsed = parseJsonLoose<any>(res.text)
+    if (!parsed) {
+      // Surface *why* synthesis produced nothing, so a blank overview is
+      // diagnosable from the Activity log instead of looking like a no-op.
+      this.ctx.log(
+        campaign.id,
+        'meta-review',
+        'warning',
+        `Meta-review response did not parse (stop: ${res.stopReason ?? 'n/a'}, ${res.usage?.outputTokens ?? '?'} output tokens)`
+      )
+    }
+    const data = parsed ?? {}
     const agentFeedback: Partial<Record<AgentRole, string>> = {}
     for (const k of ['generation', 'reflection', 'evolution', 'ranking'] as AgentRole[]) {
-      if (parsed.agentFeedback?.[k]) agentFeedback[k] = String(parsed.agentFeedback[k])
+      if (data.agentFeedback?.[k]) agentFeedback[k] = String(data.agentFeedback[k])
     }
     return {
       id: this.ctx.newId(),
       campaignId: campaign.id,
       cycle,
       createdAt: Date.now(),
-      critiquePatterns: Array.isArray(parsed.critiquePatterns)
-        ? parsed.critiquePatterns.map(String)
+      critiquePatterns: Array.isArray(data.critiquePatterns)
+        ? data.critiquePatterns.map(String)
         : [],
       agentFeedback,
       overview: {
-        summary: String(parsed.overview?.summary ?? ''),
-        areas: Array.isArray(parsed.overview?.areas)
-          ? parsed.overview.areas.map((a: any) => this.resolveAreaIds(a, top))
+        summary: String(data.overview?.summary ?? ''),
+        areas: Array.isArray(data.overview?.areas)
+          ? data.overview.areas.map((a: any) => this.resolveAreaIds(a, top))
           : []
       },
-      suggestedExperts: Array.isArray(parsed.suggestedExperts)
-        ? parsed.suggestedExperts.map((e: any) => ({
+      suggestedExperts: Array.isArray(data.suggestedExperts)
+        ? data.suggestedExperts.map((e: any) => ({
             name: String(e.name ?? ''),
             expertise: String(e.expertise ?? ''),
             rationale: String(e.rationale ?? '')
