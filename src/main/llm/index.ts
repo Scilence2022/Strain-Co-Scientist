@@ -39,13 +39,68 @@ export function parseJsonLoose<T = unknown>(text: string): T | null {
         // fall through to salvage
       }
     }
-    // 3) Salvage the complete leading objects from a truncated array — the
-    //    common "model hit max_tokens mid-array" case, which otherwise loses
-    //    every already-complete element.
-    const salvaged = salvageArray(candidate)
-    if (salvaged) return salvaged as unknown as T
+    // 3) For a truncated *top-level array*, salvage the complete leading
+    //    elements — the common "model hit max_tokens mid-array" case. Gated to
+    //    a genuine top-level array so it can't grab a nested array (e.g. an
+    //    object's first array field) out of a truncated object.
+    const firstObj = candidate.indexOf('{')
+    const firstArr = candidate.indexOf('[')
+    const topIsArray = firstArr !== -1 && (firstObj === -1 || firstArr < firstObj)
+    if (topIsArray) {
+      const salvaged = salvageArray(candidate)
+      if (salvaged) return salvaged as unknown as T
+    }
+    // 4) Salvage a truncated top-level object (e.g. a research overview cut off
+    //    mid-stream): close the dangling string/brackets and re-parse. A bad
+    //    repair simply fails JSON.parse and falls through to null.
+    const repaired = repairTruncated(candidate)
+    if (repaired) {
+      try {
+        return JSON.parse(repaired) as T
+      } catch {
+        // give up
+      }
+    }
     return null
   }
+}
+
+/**
+ * Best-effort repair of a JSON value truncated mid-stream (model hit
+ * max_tokens). Closes an unterminated string, drops a dangling key / trailing
+ * comma, and balances any still-open brackets. The caller re-parses the result,
+ * so an imperfect repair is harmless — it just fails and yields null.
+ */
+function repairTruncated(text: string): string | null {
+  const start = text.search(/[{[]/)
+  if (start === -1) return null
+  let inStr = false
+  let esc = false
+  const stack: string[] = []
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (ch === '\\') esc = true
+      else if (ch === '"') inStr = false
+      continue
+    }
+    if (ch === '"') inStr = true
+    else if (ch === '{') stack.push('}')
+    else if (ch === '[') stack.push(']')
+    else if (ch === '}' || ch === ']') stack.pop()
+  }
+  let out = text.slice(start)
+  if (inStr) out += '"' // close an unterminated string
+  // Drop a trailing fragment that can't close cleanly: a dangling "key": with
+  // no value, a partial trailing key, or a trailing comma.
+  out = out
+    .replace(/,\s*$/, '')
+    .replace(/"[^"]*"\s*:\s*$/, '')
+    .replace(/[,{]\s*"[^"]*"$/, (m) => (m[0] === '{' ? '{' : ''))
+    .replace(/,\s*$/, '')
+  while (stack.length) out += stack.pop()
+  return out
 }
 
 /**

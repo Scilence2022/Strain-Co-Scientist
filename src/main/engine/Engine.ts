@@ -208,7 +208,8 @@ export class Engine {
         this.ctx.log(id, 'meta-review', 'warning', 'Manual overview generation returned no usable content')
         return {
           ok: false,
-          message: 'The model returned no usable overview. Try again, or check the LLM connection in Settings.'
+          message:
+            "The model's response couldn't be parsed into a roadmap — it was likely truncated or malformed. Try again; see the Activity log for the stop reason."
         }
       }
       this.ctx.addMetaReview(meta)
