@@ -163,3 +163,13 @@ export const IconRefresh = (p: P) => (
     </>
   </S>
 )
+
+export const IconDownload = (p: P) => (
+  <S {...p}>
+    <>
+      <path d="M12 3v12" />
+      <path d="M7 11l5 5 5-5" />
+      <path d="M5 21h14" />
+    </>
+  </S>
+)

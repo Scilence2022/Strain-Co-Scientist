@@ -1,12 +1,88 @@
 import { useState } from 'react'
 import { useStore } from '../store/useStore'
 import { Empty } from '../components/ui'
-import { IconOverview, IconRefresh } from '../components/Icons'
+import { IconDownload, IconOverview, IconRefresh } from '../components/Icons'
+import { OBJECTIVE_LABELS, type CampaignSnapshot, type MetaReview } from '@shared/domain'
+import { hostDisplayName } from '@shared/hosts'
+
+/** A filesystem-safe slug for the export file name. */
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'campaign'
+}
+
+/** Assemble the complete research overview as a self-contained Markdown document. */
+function buildMarkdown(snapshot: CampaignSnapshot, meta: MetaReview): string {
+  const c = snapshot.campaign
+  const title = (id: string) => snapshot.designs.find((d) => d.id === id)?.title ?? id
+  const L: string[] = []
+  L.push(`# Research Overview — ${c.title}`)
+  L.push('')
+  L.push(`_Synthesised by the Meta-review agent · cycle ${meta.cycle} · generated ${new Date(meta.createdAt).toLocaleString()}_`)
+  L.push('')
+  L.push('## Campaign')
+  L.push('')
+  L.push(`- **Product / phenotype target:** ${c.productTarget}`)
+  L.push(`- **Host:** ${hostDisplayName(c.host.preset, c.host.customName)}`)
+  L.push(`- **Objective:** ${OBJECTIVE_LABELS[c.objective]}`)
+  if (c.goal.trim()) {
+    L.push('')
+    L.push('**Goal**')
+    L.push('')
+    L.push(c.goal.trim())
+  }
+  L.push('')
+  L.push('## Executive summary')
+  L.push('')
+  L.push(meta.overview.summary || '—')
+  L.push('')
+  L.push('## Engineering roadmap')
+  meta.overview.areas.forEach((area, i) => {
+    L.push('')
+    L.push(`### ${i + 1}. ${area.title}`)
+    L.push('')
+    if (area.justification.trim()) L.push(area.justification.trim())
+    if (area.exampleExperiments.length > 0) {
+      L.push('')
+      L.push('**Example experiments**')
+      L.push('')
+      area.exampleExperiments.forEach((e) => L.push(`- ${e}`))
+    }
+    if (area.relatedDesignIds.length > 0) {
+      L.push('')
+      L.push(`**Related designs:** ${area.relatedDesignIds.map(title).join('; ')}`)
+    }
+  })
+  if (meta.critiquePatterns.length > 0) {
+    L.push('')
+    L.push('## Recurring critique patterns')
+    L.push('')
+    meta.critiquePatterns.forEach((p) => L.push(`- ${p}`))
+  }
+  if (meta.suggestedExperts.length > 0) {
+    L.push('')
+    L.push('## Suggested collaborators')
+    meta.suggestedExperts.forEach((e) => {
+      L.push('')
+      L.push(`### ${e.name}`)
+      L.push('')
+      L.push(`_${e.expertise}_`)
+      L.push('')
+      L.push(e.rationale)
+    })
+  }
+  L.push('')
+  L.push('---')
+  L.push('')
+  L.push(`_Exported from Strain Co-Scientist on ${new Date().toLocaleString()}._`)
+  L.push('')
+  return L.join('\n')
+}
 
 export function ResearchOverview(): JSX.Element {
   const { snapshot, selectedId, openDesign, setView } = useStore()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [exported, setExported] = useState(false)
 
   if (!snapshot) return <div className="page"><Empty icon={<IconOverview size={36} />} title="No campaign selected" /></div>
 
@@ -21,11 +97,28 @@ export function ResearchOverview(): JSX.Element {
     if (!selectedId) return
     setBusy(true)
     setError(null)
+    setExported(false)
     const res = await window.api.regenerateOverview(selectedId)
     setBusy(false)
     if (!res.ok) setError(res.message)
     // On success the new meta-review streams in via the engine event and the
     // view re-renders automatically.
+  }
+
+  const exportOverview = async () => {
+    if (!snapshot || !meta) return
+    setError(null)
+    setExported(false)
+    const res = await window.api.exportFile({
+      defaultName: `research-overview-${slugify(snapshot.campaign.title)}.md`,
+      contents: buildMarkdown(snapshot, meta),
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: 'Text', extensions: ['txt'] }
+      ]
+    })
+    if (res.ok) setExported(true)
+    else if (!res.cancelled) setError(res.message ?? 'Export failed')
   }
 
   if (!meta) {
@@ -58,9 +151,14 @@ export function ResearchOverview(): JSX.Element {
           </div>
         </div>
         <span className="spacer" />
-        <button className="btn btn-sm" onClick={generate} disabled={busy} title="Re-synthesise from the current campaign state">
-          <IconRefresh size={13} /> {busy ? 'Regenerating…' : 'Regenerate'}
-        </button>
+        <div className="row gap-sm">
+          <button className="btn btn-sm" onClick={exportOverview} title="Export the complete research overview as a Markdown file">
+            <IconDownload size={13} /> {exported ? 'Exported ✓' : 'Export'}
+          </button>
+          <button className="btn btn-sm" onClick={generate} disabled={busy} title="Re-synthesise from the current campaign state">
+            <IconRefresh size={13} /> {busy ? 'Regenerating…' : 'Regenerate'}
+          </button>
+        </div>
       </div>
       {error && <div className="badge err" style={{ alignSelf: 'flex-start' }}>{error}</div>}
 

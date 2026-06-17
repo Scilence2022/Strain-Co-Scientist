@@ -65,6 +65,17 @@ export type EngineeringObjective =
   | 'improve-stability'
   | 'other'
 
+export const OBJECTIVE_LABELS: Record<EngineeringObjective, string> = {
+  'increase-titer': 'Increase titer',
+  'increase-rate': 'Increase rate',
+  'increase-yield': 'Increase yield',
+  'broaden-substrate': 'Broaden substrate scope',
+  'improve-tolerance': 'Improve tolerance',
+  'reduce-byproduct': 'Reduce byproduct',
+  'improve-stability': 'Improve genetic stability',
+  other: 'Other'
+}
+
 export type BiosafetyLevel = 'BSL-1' | 'BSL-2' | 'unspecified'
 
 /**

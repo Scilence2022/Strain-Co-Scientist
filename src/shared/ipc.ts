@@ -64,6 +64,26 @@ export interface OverviewGenResult {
   message: string
 }
 
+/** Request to write text content to a user-chosen file (native save dialog). */
+export interface ExportFileInput {
+  /** Suggested file name (with extension) shown in the save dialog. */
+  defaultName: string
+  /** File contents to write. */
+  contents: string
+  /** Filters for the save dialog, e.g. Markdown / plain text. */
+  filters?: { name: string; extensions: string[] }[]
+}
+
+/** Result of an export-file request. */
+export interface ExportFileResult {
+  ok: boolean
+  /** Absolute path written, when ok. Absent if the user cancelled. */
+  path?: string
+  /** False with no path means the user cancelled the dialog. */
+  cancelled?: boolean
+  message?: string
+}
+
 /** Invoke channels: renderer → main, request/response. */
 export interface IpcApi {
   // Settings
@@ -74,6 +94,9 @@ export interface IpcApi {
 
   // Research overview
   regenerateOverview(campaignId: string): Promise<OverviewGenResult>
+
+  // File export (native save dialog)
+  exportFile(input: ExportFileInput): Promise<ExportFileResult>
 
   // Campaign lifecycle
   listCampaigns(): Promise<Campaign[]>

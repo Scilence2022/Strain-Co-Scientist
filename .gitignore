@@ -8,3 +8,6 @@ release/
 .env.local
 coverage/
 .workbuddy/
+
+# TypeScript incremental build cache
+*.tsbuildinfo

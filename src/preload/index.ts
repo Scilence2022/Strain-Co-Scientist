@@ -13,6 +13,8 @@ const api: PreloadBridge = {
 
   regenerateOverview: (id) => ipcRenderer.invoke('regenerateOverview', id),
 
+  exportFile: (input) => ipcRenderer.invoke('exportFile', input),
+
   listCampaigns: () => ipcRenderer.invoke('listCampaigns'),
   createCampaign: (input) => ipcRenderer.invoke('createCampaign', input),
   deleteCampaign: (id) => ipcRenderer.invoke('deleteCampaign', id),

@@ -1,6 +1,26 @@
-import { ipcMain } from 'electron'
-import type { IpcApiChannel } from '@shared/ipc'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { writeFile } from 'node:fs/promises'
+import type { ExportFileInput, ExportFileResult, IpcApiChannel } from '@shared/ipc'
 import type { Engine } from '../engine/Engine'
+
+/** Show a native save dialog and write the supplied contents to disk. */
+async function exportFile(input: ExportFileInput): Promise<ExportFileResult> {
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? undefined
+  const opts = {
+    defaultPath: input.defaultName,
+    filters: input.filters ?? [{ name: 'All Files', extensions: ['*'] }]
+  }
+  const result = win
+    ? await dialog.showSaveDialog(win, opts)
+    : await dialog.showSaveDialog(opts)
+  if (result.canceled || !result.filePath) return { ok: false, cancelled: true }
+  try {
+    await writeFile(result.filePath, input.contents, 'utf8')
+    return { ok: true, path: result.filePath }
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) }
+  }
+}
 
 /**
  * Registers one ipcMain.handle per IpcApi method. Channel names match the
@@ -15,6 +35,8 @@ export function registerIpc(engine: Engine): void {
     pingLlm: () => engine.pingLlm(),
 
     regenerateOverview: (id) => engine.regenerateOverview(id),
+
+    exportFile: (input) => exportFile(input),
 
     listCampaigns: () => engine.listCampaigns(),
     createCampaign: (input) => engine.createCampaign(input),
