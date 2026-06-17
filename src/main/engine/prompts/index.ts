@@ -277,7 +277,7 @@ Return STRICT JSON:
   "overview": {
     "summary": "executive summary of the campaign's engineering roadmap",
     "areas": [
-      { "title": "research/engineering area", "justification": "why it matters", "exampleExperiments": ["concrete DBTL experiments"], "relatedDesignTitles": ["which top designs belong here"] }
+      { "title": "research/engineering area", "justification": "why it matters", "exampleExperiments": ["concrete DBTL experiments"], "relatedDesigns": [<numbers of the TOP-RANKED DESIGNS above that belong to this area, e.g. 1, 3>] }
     ]
   },
   "suggestedExperts": [ { "name": "role/archetype (no real individuals required)", "expertise": "...", "rationale": "why consult them" } ]

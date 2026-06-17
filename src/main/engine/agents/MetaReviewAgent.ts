@@ -8,6 +8,25 @@ export function isEmptyOverview(meta: MetaReview): boolean {
   return !meta.overview.summary.trim() && meta.overview.areas.length === 0
 }
 
+function normalizeTitle(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Tolerant title match: exact, containment, or ≥2 shared significant words. */
+function titleMatches(designTitle: string, candidate: string): boolean {
+  const a = normalizeTitle(designTitle)
+  const b = normalizeTitle(candidate)
+  if (!a || !b) return false
+  if (a === b || a.includes(b) || b.includes(a)) return true
+  const wa = new Set(a.split(' ').filter((w) => w.length >= 4))
+  const shared = b.split(' ').filter((w) => w.length >= 4 && wa.has(w))
+  return shared.length >= 2
+}
+
 /**
  * Meta-review agent. Synthesises recurring critique patterns into feedback
  * appended to other agents' prompts (improvement without backprop), and at the
@@ -41,17 +60,36 @@ export class MetaReviewAgent {
   }
 
   private resolveAreaIds(area: any, designs: StrainDesign[]): ResearchOverviewArea {
-    const titles: string[] = Array.isArray(area.relatedDesignTitles) ? area.relatedDesignTitles : []
-    const relatedDesignIds = designs
-      .filter((d) => titles.some((t) => d.title.toLowerCase().includes(String(t).toLowerCase().slice(0, 12))))
-      .map((d) => d.id)
+    // Map the area back to concrete designs. Preferred signal is an explicit
+    // 1-based reference into the numbered TOP-RANKED DESIGNS list (deterministic);
+    // we also accept titles (in either field) and match them fuzzily, so the
+    // "related designs" highlights resolve reliably across regenerations rather
+    // than depending on the model echoing a title verbatim.
+    const ids = new Set<string>()
+    const titleCandidates: string[] = Array.isArray(area.relatedDesignTitles)
+      ? area.relatedDesignTitles.map(String)
+      : []
+    const refs = Array.isArray(area.relatedDesigns) ? area.relatedDesigns : []
+    for (const r of refs) {
+      const n = Number(r)
+      if (Number.isFinite(n) && n >= 1 && n <= designs.length) {
+        ids.add(designs[Math.trunc(n) - 1].id)
+      } else if (typeof r === 'string') {
+        titleCandidates.push(r)
+      }
+    }
+    if (titleCandidates.length) {
+      for (const d of designs) {
+        if (titleCandidates.some((t) => titleMatches(d.title, t))) ids.add(d.id)
+      }
+    }
     return {
       title: String(area.title ?? 'Engineering area'),
       justification: String(area.justification ?? ''),
       exampleExperiments: Array.isArray(area.exampleExperiments)
         ? area.exampleExperiments.map(String)
         : [],
-      relatedDesignIds
+      relatedDesignIds: [...ids]
     }
   }
 
