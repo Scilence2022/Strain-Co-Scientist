@@ -5,8 +5,10 @@ import type {
   StrainDesign,
   SystemStatistics,
   AgentRole,
-  ReviewType
+  ReviewType,
+  TournamentConfig
 } from '@shared/domain'
+import { DEFAULT_TOURNAMENT_CONFIG } from '@shared/domain'
 import type { EngineContext } from './context'
 import { TaskQueue, type AgentTask } from './TaskQueue'
 import { GenerationAgent } from './agents/GenerationAgent'
@@ -200,7 +202,8 @@ export class Supervisor {
     }
 
     // 3) Tournament matches among active designs.
-    for (const [a, b, mode] of this.selectMatchPairs(active)) {
+    const tournamentCfg = campaign.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
+    for (const [a, b, mode] of this.selectMatchPairs(active, tournamentCfg)) {
       tasks.push({
         agent: 'ranking',
         label: `${mode} match: ${truncate(a.title)} vs ${truncate(b.title)}`,
@@ -315,7 +318,8 @@ export class Supervisor {
 
   /** Pick tournament pairs: newest + top designs, paired with a proximity-close partner. */
   private selectMatchPairs(
-    active: StrainDesign[]
+    active: StrainDesign[],
+    cfg: TournamentConfig
   ): [StrainDesign, StrainDesign, 'debate' | 'single-turn'][] {
     if (active.length < 2) return []
     const pairs: [StrainDesign, StrainDesign, 'debate' | 'single-turn'][] = []
@@ -323,12 +327,14 @@ export class Supervisor {
     const byElo = [...active].sort((a, b) => b.elo - a.elo)
     const byRecency = [...active].sort((a, b) => b.createdAt - a.createdAt)
 
-    // A few top-vs-top debates.
-    for (let i = 0; i + 1 < Math.min(4, byElo.length); i += 2) {
+    // A few top-vs-top debates (config: topDebates pairs).
+    let debates = 0
+    for (let i = 0; i + 1 < byElo.length && debates < cfg.topDebates; i += 2) {
       pairs.push([byElo[i], byElo[i + 1], 'debate'])
+      debates++
     }
     // Newest designs get a proximity-close single-turn match to find their level.
-    for (const d of byRecency.slice(0, 3)) {
+    for (const d of byRecency.slice(0, Math.max(0, cfg.singleTurnMatches))) {
       if (used.has(d.id)) continue
       const partner = this.proximity.closest(this.campaignAt(d.campaignId), d, new Set([d.id, ...used]))
       if (partner) {
@@ -337,7 +343,7 @@ export class Supervisor {
         used.add(partner.id)
       }
     }
-    return pairs.slice(0, 6)
+    return pairs.slice(0, Math.max(1, cfg.maxPairsPerCycle))
   }
 
   private campaignAt(id: string): Campaign {

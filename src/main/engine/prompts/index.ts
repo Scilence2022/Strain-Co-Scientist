@@ -1,5 +1,10 @@
 import type { Campaign, ReviewType, StrainDesign, EvolutionStrategy } from '@shared/domain'
-import { CRITERION_LABELS, EVOLUTION_STRATEGY_LABELS } from '@shared/domain'
+import {
+  CRITERIA_KEYS,
+  CRITERION_LABELS,
+  DEFAULT_TOURNAMENT_CONFIG,
+  EVOLUTION_STRATEGY_LABELS
+} from '@shared/domain'
 import { HOST_PRESETS, hostDisplayName } from '@shared/hosts'
 
 /**
@@ -169,7 +174,7 @@ Score each criterion 0-10 where relevant: ${Object.values(CRITERION_LABELS).join
 
 Return STRICT JSON:
 {
-  "scores": { "alignment": n, "plausibility": n, "novelty": n, "testability": n, "hostCompatibility": n, "safety": n },
+  "scores": { "alignment": n, "effectiveness": n, "plausibility": n, "novelty": n, "testability": n, "hostCompatibility": n, "safety": n },
   "verdict": "pass|revise|reject",
   "narrative": "the review, with specific, actionable critique",
   "evidence": ["concrete evidence points used (cite literature/genomic facts where used)"]
@@ -180,20 +185,44 @@ Return STRICT JSON:
 // Ranking agent — pairwise scientific-debate match
 // ---------------------------------------------------------------------------
 
+/** One-line gloss per criterion to steer the judge's scoring. */
+const CRITERION_GUIDANCE: Record<string, string> = {
+  alignment: 'fit to the stated goal and constraints',
+  effectiveness: 'expected magnitude of improvement in the target phenotype (titer/rate/yield) if the modification works — how impactful is the chosen target',
+  plausibility: 'metabolic/thermodynamic feasibility — is the mechanism likely to work at all',
+  novelty: 'how non-obvious vs. known approaches',
+  testability: 'genetic tractability + assay availability in this host',
+  hostCompatibility: 'metabolic burden, toxicity, genetic stability',
+  safety: 'biosafety / dual-use risk'
+}
+
 export function matchPrompt(
   campaign: Campaign,
   a: StrainDesign,
   b: StrainDesign,
   mode: 'debate' | 'single-turn'
 ): string {
+  const cfg = campaign.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
+  const weights = cfg.weights
+  // Only the dimensions the scientist actually weights are judged.
+  const judged = CRITERIA_KEYS.filter((k) => (weights[k] ?? 0) > 0)
+  const rubric = judged
+    .map((k) => `  - ${CRITERION_LABELS[k]} (weight ${weights[k]}): ${CRITERION_GUIDANCE[k]}`)
+    .join('\n')
+  const scoresExample = `{ ${judged.map((k) => `"${k}": <integer 0-10>`).join(', ')} }`
   const style =
     mode === 'debate'
-      ? `Conduct a concise multi-turn scientific debate (2-3 exchanges) weighing the two designs on novelty, correctness/feasibility, and testability for THIS goal and host. Then decide.`
-      : `Do a single-turn comparison weighing novelty, correctness/feasibility, and testability. Then decide.`
+      ? `Conduct a concise multi-turn scientific debate (2-3 exchanges) for THIS goal and host, then score.`
+      : `Do a single-turn comparison for THIS goal and host, then score.`
 
   return `${goalContext(campaign)}
 
 You are the Ranking agent running a tournament match. Compare the two candidate designs for this goal and host. ${style} Avoid positional bias — judge on merits, not order.
+
+Score BOTH designs 0-10 on each weighted criterion below. The system decides the winner deterministically from the weighted totals, so score honestly and independently — do NOT pre-pick a winner. Weights reflect this campaign's priorities (higher weight = more decisive); for strain engineering, effectiveness of the modification target typically dominates.
+
+WEIGHTED CRITERIA:
+${rubric}
 
 DESIGN A:
 ${designToText(a)}
@@ -203,9 +232,10 @@ ${designToText(b)}
 
 Return STRICT JSON:
 {
+  "scoresA": ${scoresExample},
+  "scoresB": ${scoresExample},
   "transcript": "the debate / comparison reasoning",
-  "winner": "A|B",
-  "rationale": "one-paragraph justification of the win/loss pattern"
+  "rationale": "one-paragraph justification grounded in the per-criterion scores"
 }`
 }
 

@@ -14,7 +14,8 @@ import type {
   SystemStatistics,
   TaskRecord,
   MetaReview,
-  Match
+  Match,
+  TournamentConfig
 } from './domain'
 
 /** Payload to create a campaign (id/timestamps assigned by main). */
@@ -103,6 +104,8 @@ export interface IpcApi {
   createCampaign(input: CreateCampaignInput): Promise<Campaign>
   deleteCampaign(id: string): Promise<void>
   getSnapshot(campaignId: string): Promise<CampaignSnapshot | null>
+  /** Update tournament scoring config and replay the Elo ladder (no LLM re-run). */
+  updateTournamentConfig(campaignId: string, config: TournamentConfig): Promise<Campaign>
 
   // Engine control
   startCampaign(campaignId: string): Promise<void>

@@ -7,7 +7,7 @@ import type {
   Review,
   StrainDesign
 } from '@shared/domain'
-import { DEFAULT_CRITERIA_WEIGHTS } from '@shared/domain'
+import { DEFAULT_TOURNAMENT_CONFIG, type TournamentConfig } from '@shared/domain'
 import { hostDisplayName } from '@shared/hosts'
 import type {
   CreateCampaignInput,
@@ -24,7 +24,7 @@ import { CodexomicsClient } from '../mcp/CodexomicsClient'
 import { EngineContext } from './context'
 import { Supervisor } from './Supervisor'
 import { MetaReviewAgent, isEmptyOverview } from './agents/MetaReviewAgent'
-import { INITIAL_ELO } from './tournament/Elo'
+import { INITIAL_ELO, updateElo, weightedTotal } from './tournament/Elo'
 
 /**
  * Top-level engine. Owns the context-memory store, settings, the MCP manager,
@@ -114,7 +114,7 @@ export class Engine {
       createdAt: now,
       updatedAt: now,
       status: 'draft',
-      criteriaWeights: input.criteriaWeights ?? DEFAULT_CRITERIA_WEIGHTS
+      tournamentConfig: input.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
     }
     if (!campaign.title.trim()) {
       campaign.title = `${campaign.productTarget} — ${hostDisplayName(campaign.host.preset, campaign.host.customName)}`
@@ -224,6 +224,94 @@ export class Engine {
       const message = err instanceof Error ? err.message : String(err)
       this.ctx.log(id, 'meta-review', 'error', `Manual overview generation failed: ${message}`)
       return { ok: false, message }
+    }
+  }
+
+  // -- Tournament configuration ---------------------------------------------
+
+  /**
+   * Update a campaign's tournament scoring config and replay the Elo ladder
+   * under the new weights. Because every match persists per-criterion judge
+   * sub-scores, re-ranking is a deterministic recomputation — no LLM matches
+   * are re-run. Designs that lack stored sub-scores (legacy matches) keep their
+   * recorded winner.
+   */
+  async updateTournamentConfig(id: string, config: TournamentConfig): Promise<Campaign> {
+    const campaign = this.store.getCampaign(id)
+    if (!campaign) throw new Error('campaign not found')
+    campaign.tournamentConfig = config
+    campaign.updatedAt = Date.now()
+    this.store.upsertCampaign(campaign)
+    this.replayElo(id, config)
+    this.ctx.log(
+      id,
+      'ranking',
+      'info',
+      'Tournament weights updated — Elo ladder replayed from stored match scores'
+    )
+    this.emit({ kind: 'campaign-status', campaignId: id, status: campaign.status })
+    await this.store.flush()
+    return campaign
+  }
+
+  /** Recompute every design's Elo from the stored matches under `config`. */
+  private replayElo(id: string, config: TournamentConfig): void {
+    const designs = this.store.getDesigns(id)
+    const matches = [...this.store.getMatches(id)].sort((a, b) => a.createdAt - b.createdAt)
+    const byId = new Map(designs.map((d) => [d.id, d]))
+
+    for (const d of designs) {
+      d.elo = INITIAL_ELO
+      d.wins = 0
+      d.losses = 0
+      d.eloHistory = [{ cycle: 0, at: d.createdAt, elo: INITIAL_ELO }]
+    }
+
+    for (const m of matches) {
+      const a = byId.get(m.designAId)
+      const b = byId.get(m.designBId)
+      if (!a || !b) continue // a participant was deleted; skip
+
+      let aWon: boolean
+      let scoreA: number
+      if (m.scoresA && m.scoresB) {
+        const tA = weightedTotal(m.scoresA, config.weights)
+        const tB = weightedTotal(m.scoresB, config.weights)
+        m.weightedTotalA = Math.round(tA * 10) / 10
+        m.weightedTotalB = Math.round(tB * 10) / 10
+        if (tA === tB) {
+          aWon = a.elo >= b.elo
+          scoreA = config.tieHandling === 'draw' ? 0.5 : aWon ? 1 : 0
+        } else {
+          aWon = tA > tB
+          scoreA = aWon ? 1 : 0
+        }
+      } else {
+        // Legacy match without sub-scores: preserve the recorded outcome.
+        aWon = m.winnerId === a.id
+        scoreA = aWon ? 1 : 0
+      }
+
+      const { newA, newB, delta } = updateElo(a.elo, b.elo, scoreA, config.kFactor)
+      a.elo = newA
+      b.elo = newB
+      a.eloHistory.push({ cycle: m.cycle, at: m.createdAt, elo: newA })
+      b.eloHistory.push({ cycle: m.cycle, at: m.createdAt, elo: newB })
+      if (aWon) {
+        a.wins += 1
+        b.losses += 1
+      } else {
+        b.wins += 1
+        a.losses += 1
+      }
+      m.winnerId = aWon ? a.id : b.id
+      m.eloDelta = delta
+    }
+
+    // Persist + push live updates (design-upsert dedupes; matches refresh via snapshot).
+    for (const d of designs) {
+      this.store.upsertDesign(d)
+      this.emit({ kind: 'design-upsert', campaignId: id, design: d })
     }
   }
 

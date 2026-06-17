@@ -80,11 +80,17 @@ export type BiosafetyLevel = 'BSL-1' | 'BSL-2' | 'unspecified'
 
 /**
  * The evaluation criteria, adapted from the paper's defaults (alignment,
- * plausibility, novelty, testability, safety) to strain engineering.
- * Weights are used by the Ranking and Reflection agents.
+ * plausibility, novelty, testability, safety) to strain engineering, plus an
+ * explicit `effectiveness` axis (how much the modification target is expected
+ * to move the desired phenotype — distinct from feasibility/plausibility).
+ *
+ * These doubly serve as the per-campaign tournament judge weights: the Ranking
+ * agent scores both designs in a match on each criterion and the higher
+ * weighted total wins. See {@link TournamentConfig}.
  */
 export interface CriteriaWeights {
   alignment: number
+  effectiveness: number // predicted impact of the target on titer/rate/yield
   plausibility: number // metabolic / thermodynamic feasibility
   novelty: number
   testability: number // genetic tractability + assay availability
@@ -92,8 +98,14 @@ export interface CriteriaWeights {
   safety: number // biosafety / dual-use
 }
 
+/**
+ * Default judge weights. `effectiveness` dominates (3×) because for a production
+ * strain the impact of the modification target usually matters more than
+ * novelty; every weight is tunable per campaign.
+ */
 export const DEFAULT_CRITERIA_WEIGHTS: CriteriaWeights = {
   alignment: 1,
+  effectiveness: 3,
   plausibility: 1,
   novelty: 1,
   testability: 1,
@@ -103,6 +115,7 @@ export const DEFAULT_CRITERIA_WEIGHTS: CriteriaWeights = {
 
 export const CRITERIA_KEYS = [
   'alignment',
+  'effectiveness',
   'plausibility',
   'novelty',
   'testability',
@@ -113,6 +126,7 @@ export type CriterionKey = (typeof CRITERIA_KEYS)[number]
 
 export const CRITERION_LABELS: Record<CriterionKey, string> = {
   alignment: 'Alignment',
+  effectiveness: 'Effectiveness',
   plausibility: 'Plausibility',
   novelty: 'Novelty',
   testability: 'Testability',
@@ -136,6 +150,43 @@ export const DEFAULT_COMPUTE_BUDGET: ComputeBudget = {
   targetDesigns: 24,
   maxCycles: 30,
   initialGeneration: 6
+}
+
+/**
+ * Per-campaign tournament configuration. The Ranking agent scores BOTH designs
+ * in a match across the weighted criteria; the winner is the higher weighted
+ * total, so raising a criterion's weight makes the tournament — and therefore
+ * the final ranking the scientist sees — prioritise that dimension.
+ *
+ * Weights are editable mid-campaign: re-weighting replays the Elo ladder from
+ * the per-match sub-scores stored on each {@link Match}, with no LLM matches
+ * re-run.
+ */
+export interface TournamentConfig {
+  /** Per-criterion judge weights (0 = ignore this dimension entirely). */
+  weights: CriteriaWeights
+  /** Top-vs-top multi-turn debate matches scheduled per cycle. */
+  topDebates: number
+  /** Single-turn matches for the newest designs per cycle. */
+  singleTurnMatches: number
+  /** Hard cap on matches scheduled in a single cycle. */
+  maxPairsPerCycle: number
+  /** Present designs to the judge in randomised A/B order to cancel position bias. */
+  randomizeOrder: boolean
+  /** How to resolve an exact weighted-total tie. */
+  tieHandling: 'higher-elo' | 'draw'
+  /** Elo K-factor (rating volatility per match). */
+  kFactor: number
+}
+
+export const DEFAULT_TOURNAMENT_CONFIG: TournamentConfig = {
+  weights: { ...DEFAULT_CRITERIA_WEIGHTS },
+  topDebates: 2,
+  singleTurnMatches: 3,
+  maxPairsPerCycle: 6,
+  randomizeOrder: true,
+  tieHandling: 'higher-elo',
+  kFactor: 32
 }
 
 export interface Campaign {
@@ -163,7 +214,7 @@ export interface Campaign {
   }
 
   preferences: string // free-text desirable attributes
-  criteriaWeights: CriteriaWeights
+  tournamentConfig: TournamentConfig
   computeBudget: ComputeBudget
 
   /** Derived by the Supervisor at parse time (research-plan configuration). */
@@ -358,6 +409,17 @@ export interface Match {
   transcript: string
   rationale: string
   eloDelta: number
+  /**
+   * Per-criterion 0-10 judge scores for each design. Persisted so the Elo
+   * ladder can be deterministically replayed under new weights without
+   * re-running the match. Absent on legacy matches (pre multi-dimensional
+   * scoring) — replay falls back to the stored winnerId for those.
+   */
+  scoresA?: Partial<Record<CriterionKey, number>>
+  scoresB?: Partial<Record<CriterionKey, number>>
+  /** Weighted totals that decided the winner, for audit in the UI. */
+  weightedTotalA?: number
+  weightedTotalB?: number
 }
 
 // ---------------------------------------------------------------------------
