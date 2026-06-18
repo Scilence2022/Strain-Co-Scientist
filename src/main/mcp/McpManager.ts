@@ -64,19 +64,20 @@ export class McpConnection {
     return client
   }
 
-  /** Connect (if needed) and report the available tool count. */
-  async test(): Promise<{ ok: boolean; message: string; toolCount?: number }> {
+  /** Connect (if needed) and report the available tools. */
+  async test(): Promise<{ ok: boolean; message: string; toolCount?: number; tools?: { name: string; description?: string }[] }> {
     if (!this.enabled) {
       return { ok: false, message: 'Server is disabled in Settings.' }
     }
     try {
       const client = await this.getClient()
-      const tools = await client.listTools()
-      this.toolNames = tools.tools.map((t) => t.name)
+      const res = await client.listTools()
+      this.toolNames = res.tools.map((t) => t.name)
       return {
         ok: true,
         message: `Connected to ${this.config.url}`,
-        toolCount: tools.tools.length
+        toolCount: res.tools.length,
+        tools: res.tools.map((t) => ({ name: t.name, description: t.description ?? undefined }))
       }
     } catch (err) {
       this.reset()

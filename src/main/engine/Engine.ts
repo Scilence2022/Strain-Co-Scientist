@@ -82,7 +82,7 @@ export class Engine {
     this.mcp.update(settings.mcp.deepResearch, settings.mcp.codexomics)
     const conn = server === 'deepResearch' ? this.mcp.deepResearch : this.mcp.codexomics
     const res = await conn.test()
-    return { server, ok: res.ok, message: res.message, toolCount: res.toolCount }
+    return { server, ok: res.ok, message: res.message, toolCount: res.toolCount, tools: res.tools }
   }
 
   async pingLlm(): Promise<{ ok: boolean; message: string; model?: string }> {

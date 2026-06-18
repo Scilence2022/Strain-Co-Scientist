@@ -10,7 +10,7 @@ import {
   type UiTheme
 } from '@shared/domain'
 import { modelCapabilities } from '@shared/models'
-import type { LlmPingResult, McpTestResult, ModelListResult } from '@shared/ipc'
+import type { LlmPingResult, McpTestResult, McpTool, ModelListResult } from '@shared/ipc'
 import {
   PROVIDERS,
   PROVIDERS_ORDERED,
@@ -635,6 +635,19 @@ function GroundingTab({
   )
 }
 
+function ToolList({ tools }: { tools: McpTool[] }): JSX.Element {
+  return (
+    <div className="tool-list">
+      {tools.map((t) => (
+        <div key={t.name} className="tool-item">
+          <span className="tool-name">{t.name}</span>
+          {t.description && <span className="tool-desc">{t.description}</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function McpRow({
   label,
   cfg,
@@ -679,9 +692,14 @@ function McpRow({
         </div>
       </div>
       {result && result !== 'loading' && (
-        <div className={`badge ${result.ok ? 'ok' : 'err'}`}>
-          {result.ok ? `Connected · ${result.toolCount ?? 0} tools` : `Failed: ${result.message}`}
-        </div>
+        <>
+          <div className={`badge ${result.ok ? 'ok' : 'err'}`} style={{ marginBottom: result.ok && result.tools?.length ? 10 : 0 }}>
+            {result.ok ? `Connected · ${result.toolCount ?? 0} tools` : `Failed: ${result.message}`}
+          </div>
+          {result.ok && result.tools?.length ? (
+            <ToolList tools={result.tools} />
+          ) : null}
+        </>
       )}
     </div>
   )

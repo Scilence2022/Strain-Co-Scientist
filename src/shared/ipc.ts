@@ -45,12 +45,18 @@ export type ExpertReviewInput = {
   author: string
 }
 
+export interface McpTool {
+  name: string
+  description?: string
+}
+
 /** Result of testing an MCP connection. */
 export interface McpTestResult {
   ok: boolean
   server: 'deepResearch' | 'codexomics'
   message: string
   toolCount?: number
+  tools?: McpTool[]
 }
 
 /** Result of pinging the configured LLM provider. */
