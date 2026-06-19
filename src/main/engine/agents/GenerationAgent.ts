@@ -17,7 +17,8 @@ export class GenerationAgent {
     strategy: GenerationStrategy,
     count: number,
     cycle: number,
-    metaFeedback?: string
+    metaFeedback?: string,
+    empiricalPriors?: string
   ): Promise<StrainDesign[]> {
     const existingTitles = this.ctx.store.getDesigns(campaign.id).map((d) => d.title)
 
@@ -37,6 +38,7 @@ export class GenerationAgent {
       count,
       literature,
       metaFeedback,
+      empiricalPriors,
       existingTitles: existingTitles.slice(-20)
     })
 

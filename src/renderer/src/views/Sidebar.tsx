@@ -8,6 +8,7 @@ export function Sidebar(): JSX.Element {
   const counts: Partial<Record<string, number>> = {
     designs: snapshot?.designs.filter((d) => d.status !== 'rejected').length,
     tournament: snapshot?.matches.length,
+    experiments: snapshot?.results?.length,
     log: snapshot?.events.length
   }
 

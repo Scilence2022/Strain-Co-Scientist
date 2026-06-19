@@ -16,7 +16,11 @@ import type {
   MetaReview,
   Match,
   TournamentConfig,
-  LLMProvider
+  LLMProvider,
+  ExperimentalResult,
+  CalibrationProfile,
+  ResultOutcome,
+  QuantPrediction
 } from './domain'
 
 /** Payload to create a campaign (id/timestamps assigned by main). */
@@ -43,6 +47,21 @@ export type ExpertReviewInput = {
   narrative: string
   scores: Review['scores']
   author: string
+}
+
+/** A wet-lab result the scientist records against a design (id/timestamp/status assigned by main). */
+export interface RecordResultInput {
+  campaignId: string
+  designId: string
+  outcome: ResultOutcome
+  metric?: QuantPrediction['metric']
+  measuredValue?: number
+  baselineValue?: number
+  unit?: string
+  replicates?: number
+  observations: string
+  /** Defaults to "Scientist" when omitted. */
+  author?: string
 }
 
 export interface McpTool {
@@ -136,6 +155,14 @@ export interface IpcApi {
   submitExpertDesign(input: ExpertDesignInput): Promise<StrainDesign>
   submitExpertReview(input: ExpertReviewInput): Promise<Review>
   flagDesign(designId: string, flagged: boolean): Promise<StrainDesign>
+
+  // Experimental-results feedback loop (DBTL "Learn")
+  /** Record a wet-lab result; re-derives the design's evidence grade + campaign calibration. */
+  recordExperimentalResult(input: RecordResultInput): Promise<ExperimentalResult>
+  /** Mark a result disputed (true) or restore it to recorded (false). */
+  disputeResult(campaignId: string, resultId: string, disputed: boolean): Promise<ExperimentalResult>
+  /** Re-open a terminated campaign to act on newly-arrived experimental data. */
+  reopenCampaign(campaignId: string): Promise<void>
 }
 
 export type IpcApiChannel = keyof IpcApi
@@ -150,6 +177,8 @@ export type EngineEvent =
   | { kind: 'meta-review'; campaignId: string; metaReview: MetaReview }
   | { kind: 'task-upsert'; campaignId: string; task: TaskRecord }
   | { kind: 'campaign-status'; campaignId: string; status: Campaign['status'] }
+  | { kind: 'result-added'; campaignId: string; result: ExperimentalResult }
+  | { kind: 'calibration-updated'; campaignId: string; calibration: CalibrationProfile }
 
 export const ENGINE_EVENT_CHANNEL = 'engine:event'
 

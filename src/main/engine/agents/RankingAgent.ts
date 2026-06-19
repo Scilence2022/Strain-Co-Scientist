@@ -2,6 +2,7 @@ import type {
   Campaign,
   CriteriaWeights,
   CriterionKey,
+  ExperimentalResult,
   Match,
   StrainDesign,
   TournamentConfig
@@ -36,7 +37,9 @@ export class RankingAgent {
     cycle: number
   ): Promise<Match> {
     const cfg = campaign.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
-    const decision = await this.llmMatch(campaign, a, b, mode, cfg)
+    const resultsA = this.ctx.store.getResultsForDesign(campaign.id, a.id)
+    const resultsB = this.ctx.store.getResultsForDesign(campaign.id, b.id)
+    const decision = await this.llmMatch(campaign, a, b, mode, cfg, resultsA, resultsB)
 
     const totalA = weightedTotal(decision.scoresA, cfg.weights)
     const totalB = weightedTotal(decision.scoresB, cfg.weights)
@@ -92,17 +95,22 @@ export class RankingAgent {
     a: StrainDesign,
     b: StrainDesign,
     mode: 'debate' | 'single-turn',
-    cfg: TournamentConfig
+    cfg: TournamentConfig,
+    resultsA: ExperimentalResult[],
+    resultsB: ExperimentalResult[]
   ): Promise<{ scoresA: Scores; scoresB: Scores; transcript: string; rationale: string }> {
     // Cancel positional bias by randomising which design is presented first,
-    // then mapping the judge's scoresA/scoresB back to the real A/B.
+    // then mapping the judge's scoresA/scoresB back to the real A/B. The measured
+    // results travel with their design through the swap so the prompt stays correct.
     const swap = cfg.randomizeOrder && Math.random() < 0.5
     const first = swap ? b : a
     const second = swap ? a : b
+    const resultsFirst = swap ? resultsB : resultsA
+    const resultsSecond = swap ? resultsA : resultsB
     const res = await this.ctx.llm.complete({
       agent: 'ranking',
       system: SYSTEM_PREAMBLE,
-      prompt: matchPrompt(campaign, first, second, mode),
+      prompt: matchPrompt(campaign, first, second, mode, resultsFirst, resultsSecond),
       effort: mode === 'debate' ? 'medium' : 'low',
       think: mode === 'debate',
       maxTokens: 2000

@@ -14,6 +14,7 @@ export type ViewKey =
   | 'tournament'
   | 'proximity'
   | 'overview'
+  | 'experiments'
   | 'expert'
   | 'log'
   | 'settings'
@@ -139,6 +140,13 @@ export const useStore = create<State>((set, get) => ({
         set({ snapshot: { ...snap, tasks } })
         break
       }
+      case 'result-added':
+        // Upsert by id so a dispute/restore (same id) replaces in place.
+        set({ snapshot: { ...snap, results: upsertById(snap.results ?? [], e.result) } })
+        break
+      case 'calibration-updated':
+        set({ snapshot: { ...snap, calibration: [...(snap.calibration ?? []), e.calibration] } })
+        break
     }
   }
 }))
@@ -152,6 +160,14 @@ function upsert(list: StrainDesign[], item: StrainDesign): StrainDesign[] {
 }
 
 function upsertTask<T extends { id: string }>(list: T[], item: T): T[] {
+  const idx = list.findIndex((t) => t.id === item.id)
+  if (idx === -1) return [...list, item]
+  const copy = list.slice()
+  copy[idx] = item
+  return copy
+}
+
+function upsertById<T extends { id: string }>(list: T[], item: T): T[] {
   const idx = list.findIndex((t) => t.id === item.id)
   if (idx === -1) return [...list, item]
   const copy = list.slice()

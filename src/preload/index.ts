@@ -32,6 +32,11 @@ const api: PreloadBridge = {
   submitExpertReview: (input) => ipcRenderer.invoke('submitExpertReview', input),
   flagDesign: (designId, flagged) => ipcRenderer.invoke('flagDesign', designId, flagged),
 
+  recordExperimentalResult: (input) => ipcRenderer.invoke('recordExperimentalResult', input),
+  disputeResult: (campaignId, resultId, disputed) =>
+    ipcRenderer.invoke('disputeResult', campaignId, resultId, disputed),
+  reopenCampaign: (id) => ipcRenderer.invoke('reopenCampaign', id),
+
   onEngineEvent: (handler: (event: EngineEvent) => void) => {
     const listener = (_e: unknown, event: EngineEvent): void => handler(event)
     ipcRenderer.on(ENGINE_EVENT_CHANNEL, listener)

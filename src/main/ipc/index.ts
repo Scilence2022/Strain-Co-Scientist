@@ -53,7 +53,12 @@ export function registerIpc(engine: Engine): void {
     refineGoal: (id, addendum) => engine.refineGoal(id, addendum),
     submitExpertDesign: (input) => engine.submitExpertDesign(input),
     submitExpertReview: (input) => engine.submitExpertReview(input),
-    flagDesign: (designId, flagged) => engine.flagDesign(designId, flagged)
+    flagDesign: (designId, flagged) => engine.flagDesign(designId, flagged),
+
+    recordExperimentalResult: (input) => engine.recordExperimentalResult(input),
+    disputeResult: (campaignId, resultId, disputed) =>
+      engine.disputeResult(campaignId, resultId, disputed),
+    reopenCampaign: (id) => engine.reopenCampaign(id)
   }
 
   for (const [channel, handler] of Object.entries(handlers)) {

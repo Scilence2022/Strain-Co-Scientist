@@ -279,6 +279,25 @@ export interface DBTLStep {
   description: string
 }
 
+/**
+ * A structured, comparable prediction the design commits to, so a measured
+ * outcome can be scored against it (prediction calibration). Authored by the
+ * Generation/Evolution agents alongside the free-text `predictedEffect`; fully
+ * optional so a parse miss never blocks design creation.
+ */
+export interface QuantPrediction {
+  /** Which phenotype the prediction is about. */
+  metric: 'titer' | 'rate' | 'yield' | 'tolerance' | 'other'
+  /** Direction of the expected change vs the unmodified baseline. */
+  direction: 'increase' | 'decrease'
+  /** Predicted relative change vs baseline as a fraction, e.g. 0.3 = ±30%. */
+  relativeChange?: number
+  /** 0-1 self-assessed confidence in the prediction (used for Brier calibration). */
+  confidence?: number
+  /** What the change is measured against, e.g. "wild-type BL21 in shake flask". */
+  baselineNote?: string
+}
+
 export interface ConstructSuggestion {
   label: string // e.g. "Forward primer for ldhA deletion cassette"
   detail: string
@@ -301,6 +320,54 @@ export type DesignStatus =
   | 'active' // in the tournament
   | 'rejected' // failed initial review
   | 'flagged' // marked by the scientist for wet-lab
+
+/**
+ * Outcome of building + testing a design in the wet lab (the DBTL "Test"/
+ * "Learn" step). `build-failed`/`inconclusive` are recorded but never downgrade
+ * a design below `predicted-only` — only a decisive measured outcome moves the
+ * evidence grade.
+ */
+export type ResultOutcome =
+  | 'confirmed' // measured improvement met or beat the prediction
+  | 'partial' // some improvement, below the prediction
+  | 'refuted' // no improvement, or worse than baseline
+  | 'inconclusive' // assay failed or too noisy to call
+  | 'build-failed' // the strain could not be constructed
+
+export const RESULT_OUTCOME_LABELS: Record<ResultOutcome, string> = {
+  confirmed: 'Confirmed',
+  partial: 'Partial',
+  refuted: 'Refuted',
+  inconclusive: 'Inconclusive',
+  'build-failed': 'Build failed'
+}
+
+/**
+ * The authoritative empirical standing of a design, derived purely from its
+ * {@link ExperimentalResult}s. This is the top-level ordering key — a
+ * measured-confirmed design always sorts above a predicted-only one regardless
+ * of Elo, and a refuted design sinks below everything. See {@link compareDesigns}.
+ */
+export type EvidenceGrade =
+  | 'measured-confirmed'
+  | 'measured-partial'
+  | 'predicted-only' // the default for every design with no wet-lab data
+  | 'measured-refuted'
+
+export const EVIDENCE_GRADE_LABELS: Record<EvidenceGrade, string> = {
+  'measured-confirmed': 'Confirmed in lab',
+  'measured-partial': 'Partially supported',
+  'predicted-only': 'Predicted only',
+  'measured-refuted': 'Refuted in lab'
+}
+
+/** Sort rank for evidence grades; higher = more authoritative. */
+export const EVIDENCE_RANK: Record<EvidenceGrade, number> = {
+  'measured-confirmed': 3,
+  'measured-partial': 2,
+  'predicted-only': 1,
+  'measured-refuted': 0
+}
 
 export interface EloSnapshot {
   cycle: number
@@ -329,6 +396,8 @@ export interface StrainDesign {
   mechanism: string
   /** Qualitative predicted effect on titer/rate/yield + rationale. */
   predictedEffect: string
+  /** Structured, calibratable prediction (optional; complements predictedEffect). */
+  quantPrediction?: QuantPrediction
   experimentalPlan: DBTLStep[]
   constructSuggestions: ConstructSuggestion[]
   risks: string[]
@@ -339,6 +408,14 @@ export interface StrainDesign {
 
   origin: DesignOrigin
   status: DesignStatus
+  /**
+   * Cached evidence grade derived from this design's {@link ExperimentalResult}s.
+   * Kept in sync by the engine whenever a result is recorded/disputed and
+   * recomputed on store load, so comparators can read it without re-aggregating.
+   * Absent (treated as `predicted-only`) on legacy designs and designs with no
+   * wet-lab data.
+   */
+  evidence?: EvidenceGrade
   lineage: DesignLineage
 
   // Tournament state
@@ -353,6 +430,66 @@ export interface StrainDesign {
 }
 
 // ---------------------------------------------------------------------------
+// Experimental results (DBTL "Test"/"Learn" — closes the feedback loop)
+// ---------------------------------------------------------------------------
+
+/**
+ * A wet-lab (or external dataset) measurement returned for a design. This is the
+ * ground-truth signal that closes the Design-Build-Test-Learn loop: results are
+ * authoritative over the model's predicted merit. A design may accrue several
+ * results (replicate batches, re-tests); the evidence grade is derived from the
+ * aggregate of its `recorded` results.
+ */
+export interface ExperimentalResult {
+  id: string
+  campaignId: string
+  designId: string
+  createdAt: number
+  outcome: ResultOutcome
+  /** Which phenotype was measured (for calibration against the prediction). */
+  metric?: QuantPrediction['metric']
+  /** Measured value and its baseline (same unit) — enables a calibration delta. */
+  measuredValue?: number
+  baselineValue?: number
+  unit?: string
+  /** Replicate count, so a single noisy point isn't over-trusted. */
+  replicates?: number
+  /** Observations — especially failure modes, the high-value negative signal. */
+  observations: string
+  /** Who reported it + provenance (lab, dataset, paper). */
+  author: string
+  /**
+   * An expert can dispute a result; `disputed`/`superseded` results drop out of
+   * the authoritative evidence grade and calibration until resolved.
+   */
+  status: 'recorded' | 'disputed' | 'superseded'
+}
+
+/**
+ * Per-cycle prediction-calibration snapshot: how well the campaign's structured
+ * predictions matched what the lab measured. The whole point of the feedback
+ * loop is that these numbers improve over time — the system learns to predict
+ * better. Computed purely from designs + their results.
+ */
+export interface CalibrationProfile {
+  campaignId: string
+  cycle: number
+  at: number
+  /** Number of (prediction, measurement) pairs the profile is computed from. */
+  nPairs: number
+  /** Mean signed error (predicted − measured relative change). >0 = over-optimism. */
+  signedBias: number
+  /** Mean absolute error of the predicted relative change. */
+  meanAbsError: number
+  /** Spearman rank correlation between predicted and measured effect (−1..1). */
+  spearman: number
+  /** Brier score on the predicted-direction hit, when confidences are present (0..1, lower better). */
+  brier?: number
+  /** Mean signed error broken down by intervention type, to expose class-specific bias. */
+  biasByInterventionType: Partial<Record<InterventionType, number>>
+}
+
+// ---------------------------------------------------------------------------
 // Reviews (Reflection agent) — the six review modes from the paper
 // ---------------------------------------------------------------------------
 
@@ -364,6 +501,7 @@ export type ReviewType =
   | 'simulation'
   | 'tournament'
   | 'expert'
+  | 'calibration'
 
 export const REVIEW_TYPE_LABELS: Record<ReviewType, string> = {
   initial: 'Initial review',
@@ -372,7 +510,8 @@ export const REVIEW_TYPE_LABELS: Record<ReviewType, string> = {
   observation: 'Observation review',
   simulation: 'Simulation review',
   tournament: 'Tournament review',
-  expert: 'Expert review'
+  expert: 'Expert review',
+  calibration: 'Calibration review'
 }
 
 export interface Review {
@@ -433,6 +572,7 @@ export type EvolutionStrategy =
   | 'combination'
   | 'simplification'
   | 'out-of-box'
+  | 'empirical-refinement'
 
 export const EVOLUTION_STRATEGY_LABELS: Record<EvolutionStrategy, string> = {
   'grounding-enhancement': 'Enhancement through grounding',
@@ -440,7 +580,8 @@ export const EVOLUTION_STRATEGY_LABELS: Record<EvolutionStrategy, string> = {
   inspiration: 'Inspiration from top designs',
   combination: 'Combination',
   simplification: 'Simplification',
-  'out-of-box': 'Out-of-box thinking'
+  'out-of-box': 'Out-of-box thinking',
+  'empirical-refinement': 'Empirical refinement (from results)'
 }
 
 // ---------------------------------------------------------------------------
@@ -705,4 +846,43 @@ export interface CampaignSnapshot {
   statistics: SystemStatistics[]
   tasks: TaskRecord[]
   events: ActivityEvent[]
+  /** Wet-lab results recorded against designs (DBTL "Learn"). */
+  results: ExperimentalResult[]
+  /** Per-cycle prediction-calibration snapshots. */
+  calibration: CalibrationProfile[]
+}
+
+// ---------------------------------------------------------------------------
+// Evidence & ranking helpers (pure — shared by the engine and the renderer)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive a design's authoritative evidence grade from its results. Only
+ * `recorded` results count (disputed/superseded are ignored). The most decisive
+ * recorded outcome wins, in priority order confirmed > partial > refuted;
+ * `build-failed`/`inconclusive` carry no decisive signal and leave the design at
+ * `predicted-only`. Pure: same inputs always yield the same grade.
+ */
+export function evidenceGradeFor(results: ExperimentalResult[]): EvidenceGrade {
+  const decisive = results.filter((r) => r.status === 'recorded')
+  if (decisive.some((r) => r.outcome === 'confirmed')) return 'measured-confirmed'
+  if (decisive.some((r) => r.outcome === 'partial')) return 'measured-partial'
+  if (decisive.some((r) => r.outcome === 'refuted')) return 'measured-refuted'
+  return 'predicted-only'
+}
+
+/** The numeric evidence rank for a design (defaulting absent → predicted-only). */
+export function evidenceRankOf(design: Pick<StrainDesign, 'evidence'>): number {
+  return EVIDENCE_RANK[design.evidence ?? 'predicted-only']
+}
+
+/**
+ * Authoritative "best first" comparator: evidence grade dominates, Elo breaks
+ * ties within a grade. Measured ground truth therefore always outranks a purely
+ * predicted design, while the speculative Elo ladder still orders the frontier.
+ * Use everywhere designs are sorted for selection or display.
+ */
+export function compareDesigns(a: StrainDesign, b: StrainDesign): number {
+  const byEvidence = evidenceRankOf(b) - evidenceRankOf(a)
+  return byEvidence !== 0 ? byEvidence : b.elo - a.elo
 }

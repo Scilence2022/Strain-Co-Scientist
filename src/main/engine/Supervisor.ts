@@ -2,13 +2,14 @@ import type {
   Campaign,
   DesignStatus,
   EvolutionStrategy,
+  ExperimentalResult,
   StrainDesign,
   SystemStatistics,
   AgentRole,
   ReviewType,
   TournamentConfig
 } from '@shared/domain'
-import { DEFAULT_TOURNAMENT_CONFIG } from '@shared/domain'
+import { compareDesigns, DEFAULT_TOURNAMENT_CONFIG, RESULT_OUTCOME_LABELS } from '@shared/domain'
 import type { EngineContext } from './context'
 import { TaskQueue, type AgentTask } from './TaskQueue'
 import { GenerationAgent } from './agents/GenerationAgent'
@@ -18,6 +19,7 @@ import { ProximityAgent } from './agents/ProximityAgent'
 import { EvolutionAgent } from './agents/EvolutionAgent'
 import { MetaReviewAgent } from './agents/MetaReviewAgent'
 import { parseGoalPrompt, SYSTEM_PREAMBLE, type GenerationStrategy } from './prompts'
+import { calibrationNote } from './learn/Calibration'
 import { parseJsonLoose } from '../llm'
 
 const GEN_STRATEGIES: GenerationStrategy[] = ['literature', 'debate', 'assumptions', 'expansion']
@@ -163,6 +165,7 @@ export class Supervisor {
     const tasks: AgentTask[] = []
     const designs = this.ctx.store.getDesigns(campaign.id)
     const feedback = this.metaFeedback()
+    const priors = this.empiricalPriors(campaign)
 
     const drafts = designs.filter((d) => d.status === 'draft')
     const active = designs.filter((d) => d.status === 'active' || d.status === 'flagged')
@@ -194,11 +197,39 @@ export class Supervisor {
       tasks.push(this.reviewTask(campaign, d, 'full', cycle, feedback?.reflection))
     }
     if (cycle % 3 === 0) {
-      const top = [...active].sort((a, b) => b.elo - a.elo).slice(0, 2)
+      const top = [...active].sort(compareDesigns).slice(0, 2)
       for (const d of top) {
         const types: ReviewType[] = ['deep-verification', 'simulation']
         tasks.push(this.reviewTask(campaign, d, types[cycle % 2], cycle, feedback?.reflection))
       }
+    }
+
+    // 2b) Calibration reviews + empirical refinement for designs with new wet-lab
+    // data — this is the "Learn" step that closes the DBTL loop.
+    const needCalibration = this.designsNeedingCalibration(campaign).slice(0, 3)
+    for (const d of needCalibration) {
+      tasks.push(this.reviewTask(campaign, d, 'calibration', cycle, feedback?.reflection))
+    }
+    const measured = this.designsWithResults(campaign)
+    if (measured.length) {
+      // Refine the best empirically-graded measured design from what the lab saw.
+      const parent = [...measured].sort(compareDesigns)[0]
+      tasks.push({
+        agent: 'evolution',
+        label: `Empirical refinement of ${truncate(parent.title)}`,
+        cycle,
+        run: async () => {
+          const child = await this.evolution.evolve(
+            campaign,
+            [parent],
+            'empirical-refinement',
+            cycle,
+            feedback?.evolution,
+            priors
+          )
+          return child ? [child.id] : []
+        }
+      })
     }
 
     // 3) Tournament matches among active designs.
@@ -229,7 +260,7 @@ export class Supervisor {
     // 5) Evolution of top designs (adaptive: bias toward evolution if it wins).
     if (active.length >= 2 && cycle % 2 === 0) {
       const evoCount = this.evolutionWinRate(active) >= this.generationWinRate(active) ? 2 : 1
-      const top = [...active].sort((a, b) => b.elo - a.elo)
+      const top = [...active].sort(compareDesigns)
       for (let i = 0; i < evoCount; i++) {
         const strat = EVO_STRATEGIES[(cycle + i) % EVO_STRATEGIES.length]
         const parents =
@@ -239,7 +270,14 @@ export class Supervisor {
           label: `Evolve top design (${strat})`,
           cycle,
           run: async () => {
-            const child = await this.evolution.evolve(campaign, parents, strat, cycle, feedback?.evolution)
+            const child = await this.evolution.evolve(
+              campaign,
+              parents,
+              strat,
+              cycle,
+              feedback?.evolution,
+              priors
+            )
             return child ? [child.id] : []
           }
         })
@@ -254,7 +292,14 @@ export class Supervisor {
         label: `Expand design space (${strat})`,
         cycle,
         run: async () => {
-          const created = await this.generation.generate(campaign, strat, 3, cycle, feedback?.generation)
+          const created = await this.generation.generate(
+            campaign,
+            strat,
+            3,
+            cycle,
+            feedback?.generation,
+            priors
+          )
           return created.map((d) => d.id)
         }
       })
@@ -385,6 +430,59 @@ export class Supervisor {
     return this.ctx.store.latestMetaReview(this.campaignId)?.agentFeedback
   }
 
+  /** Non-rejected designs that carry at least one authoritative (recorded) result. */
+  private designsWithResults(campaign: Campaign): StrainDesign[] {
+    return this.ctx.store
+      .getDesigns(campaign.id)
+      .filter((d) => d.status !== 'rejected')
+      .filter((d) =>
+        this.ctx.store.getResultsForDesign(campaign.id, d.id).some((r) => r.status === 'recorded')
+      )
+  }
+
+  /** Designs whose newest recorded result is newer than their newest calibration review. */
+  private designsNeedingCalibration(campaign: Campaign): StrainDesign[] {
+    const snap = this.ctx.store.getSnapshot(campaign.id)
+    const latestResultAt = new Map<string, number>()
+    for (const r of snap?.results ?? []) {
+      if (r.status !== 'recorded') continue
+      latestResultAt.set(r.designId, Math.max(latestResultAt.get(r.designId) ?? 0, r.createdAt))
+    }
+    const latestCalAt = new Map<string, number>()
+    for (const rv of snap?.reviews ?? []) {
+      if (rv.type !== 'calibration') continue
+      latestCalAt.set(rv.designId, Math.max(latestCalAt.get(rv.designId) ?? 0, rv.createdAt))
+    }
+    return this.ctx.store.getDesigns(campaign.id).filter((d) => {
+      if (d.status === 'rejected') return false
+      const ra = latestResultAt.get(d.id)
+      return ra !== undefined && ra > (latestCalAt.get(d.id) ?? 0)
+    })
+  }
+
+  /**
+   * Campaign-level empirical priors built from recorded wet-lab results +
+   * calibration: what to amplify, what to avoid, and where predictions are
+   * biased. Injected into Generation/Evolution prompts. Undefined when there's
+   * no measured data yet.
+   */
+  private empiricalPriors(campaign: Campaign): string | undefined {
+    const results = this.ctx.store.getResults(campaign.id).filter((r) => r.status === 'recorded')
+    if (!results.length) return undefined
+    const designs = this.ctx.store.getDesigns(campaign.id)
+    const titleOf = (id: string): string => designs.find((d) => d.id === id)?.title ?? 'design'
+    const line = (r: ExperimentalResult): string =>
+      `  - ${titleOf(r.designId)}: ${RESULT_OUTCOME_LABELS[r.outcome]} — ${r.observations}`
+    const validated = results.filter((r) => r.outcome === 'confirmed' || r.outcome === 'partial')
+    const failed = results.filter((r) => r.outcome === 'refuted' || r.outcome === 'build-failed')
+    const lines: string[] = []
+    if (validated.length) lines.push('Validated (amplify these mechanisms):', ...validated.slice(-8).map(line))
+    if (failed.length) lines.push('Failed / avoid (do not repeat):', ...failed.slice(-8).map(line))
+    const note = calibrationNote(this.ctx.store.latestCalibration(campaign.id))
+    if (note) lines.push(`Calibration: ${note}`)
+    return lines.length ? lines.join('\n') : undefined
+  }
+
   private winRateForOrigin(active: StrainDesign[], origin: StrainDesign['origin']): number {
     const group = active.filter((d) => d.origin === origin)
     const games = group.reduce((s, d) => s + d.wins + d.losses, 0)
@@ -455,6 +553,9 @@ export class Supervisor {
 
   private isTerminal(campaign: Campaign, cycle: number): boolean {
     if (cycle >= campaign.computeBudget.maxCycles) return true
+    // Never terminate while there is wet-lab data the agents haven't learned from
+    // yet — a result that just arrived must drive at least one calibration cycle.
+    if (this.designsNeedingCalibration(campaign).length > 0) return false
     const designs = this.ctx.store.getDesigns(campaign.id)
     const nonRejected = designs.filter((d) => d.status !== 'rejected')
     const active = designs.filter((d) => d.status === 'active' || d.status === 'flagged')

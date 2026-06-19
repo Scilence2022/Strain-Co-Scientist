@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useStore } from '../store/useStore'
-import { DesignStatusBadge, Empty } from '../components/ui'
+import { DesignStatusBadge, Empty, EvidenceBadge } from '../components/ui'
+import { RecordResultForm } from '../components/Results'
 import { IconExpert, IconPlus, IconClose, IconFlag } from '../components/Icons'
 import {
+  compareDesigns,
   CRITERION_LABELS,
   INTERVENTION_LABELS,
   type CriterionKey,
@@ -16,6 +18,8 @@ export function ExpertView(): JSX.Element {
   const campaign = snapshot.campaign
   const active = snapshot.designs.filter((d) => d.status !== 'rejected')
   const flagged = snapshot.designs.filter((d) => d.status === 'flagged')
+  const terminal =
+    campaign.status === 'completed' || campaign.status === 'stopped' || campaign.status === 'error'
 
   return (
     <div className="page page-narrow col gap-lg">
@@ -29,6 +33,7 @@ export function ExpertView(): JSX.Element {
       <RefineGoal campaignId={campaign.id} current={campaign.goal} onDone={refreshSnapshot} />
       <ContributeDesign campaignId={campaign.id} chassisDefault={snapshot.designs[0]?.chassis ?? ''} onDone={refreshSnapshot} />
       <ProvideReview onDone={refreshSnapshot} />
+      <RecordResult campaignId={campaign.id} onDone={refreshSnapshot} terminal={terminal} />
 
       <div className="card">
         <div className="card-head">
@@ -41,6 +46,7 @@ export function ExpertView(): JSX.Element {
             {flagged.map((d) => (
               <div key={d.id} className="lineage-node row">
                 <span style={{ fontWeight: 600 }}>{d.title}</span>
+                <EvidenceBadge grade={d.evidence} />
                 <span className="badge accent" style={{ marginLeft: 8 }}>Elo {d.elo}</span>
                 <span className="spacer" />
                 <button
@@ -118,6 +124,74 @@ function RefineGoal({ campaignId, current, onDone }: { campaignId: string; curre
           Add refinement
         </button>
       </div>
+    </div>
+  )
+}
+
+function RecordResult({
+  campaignId,
+  onDone,
+  terminal
+}: {
+  campaignId: string
+  onDone: () => void
+  terminal: boolean
+}): JSX.Element {
+  const { snapshot } = useStore()
+  const active = snapshot?.designs.filter((d) => d.status !== 'rejected') ?? []
+  // Flagged designs (queued for the wet lab) float to the top of the picker.
+  const ordered = [...active].sort((a, b) => {
+    const fa = a.status === 'flagged' ? 0 : 1
+    const fb = b.status === 'flagged' ? 0 : 1
+    return fa - fb || compareDesigns(a, b)
+  })
+  const [designId, setDesignId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const selected = ordered.find((d) => d.id === designId) ?? null
+
+  return (
+    <div className="card">
+      <div className="section-title">Record an experimental result</div>
+      <p className="faint" style={{ fontSize: 'var(--fs-sm)', marginTop: 0 }}>
+        Feed wet-lab outcomes back in. Measured results outrank purely-predicted designs and recalibrate the agents.
+      </p>
+      {terminal && (
+        <div className="row gap-sm" style={{ marginBottom: 10 }}>
+          <span className="faint" style={{ fontSize: 'var(--fs-sm)' }}>
+            This campaign has ended — re-open it to let the agents act on new data.
+          </span>
+          <span className="spacer" />
+          <button
+            className="btn btn-sm"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true)
+              await window.api.reopenCampaign(campaignId)
+              setBusy(false)
+              onDone()
+            }}
+          >
+            Re-open campaign
+          </button>
+        </div>
+      )}
+      <div className="field">
+        <label>Design</label>
+        <select value={designId} onChange={(e) => setDesignId(e.target.value)}>
+          <option value="">Select a design…</option>
+          {ordered.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.status === 'flagged' ? '★ ' : ''}
+              {d.title}
+            </option>
+          ))}
+        </select>
+      </div>
+      {selected ? (
+        <RecordResultForm campaignId={campaignId} designId={selected.id} onDone={onDone} />
+      ) : (
+        <span className="faint">Pick a design to record a result against.</span>
+      )}
     </div>
   )
 }

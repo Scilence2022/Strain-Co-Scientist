@@ -1,4 +1,11 @@
-import type { CampaignStatus, DesignStatus, Review } from '@shared/domain'
+import type {
+  CampaignStatus,
+  DesignStatus,
+  EvidenceGrade,
+  ResultOutcome,
+  Review
+} from '@shared/domain'
+import { EVIDENCE_GRADE_LABELS, RESULT_OUTCOME_LABELS } from '@shared/domain'
 
 export function timeAgo(ts: number): string {
   const s = Math.floor((Date.now() - ts) / 1000)
@@ -49,6 +56,44 @@ export function CampaignStatusPill({ status }: { status: CampaignStatus }): JSX.
       {m.label}
     </span>
   )
+}
+
+/**
+ * Authoritative empirical standing of a design. Renders nothing for the
+ * predicted-only default unless `showPredicted` is set, so the badge only draws
+ * attention to designs that actually carry wet-lab evidence.
+ */
+export function EvidenceBadge({
+  grade,
+  showPredicted
+}: {
+  grade?: EvidenceGrade
+  showPredicted?: boolean
+}): JSX.Element | null {
+  const g: EvidenceGrade = grade ?? 'predicted-only'
+  if (g === 'predicted-only' && !showPredicted) return null
+  const cls: Record<EvidenceGrade, string> = {
+    'measured-confirmed': 'ok',
+    'measured-partial': 'blue',
+    'predicted-only': '',
+    'measured-refuted': 'err'
+  }
+  return (
+    <span className={`badge ${cls[g]}`} title="Evidence grade (measured outranks predicted)">
+      {EVIDENCE_GRADE_LABELS[g]}
+    </span>
+  )
+}
+
+export function OutcomeBadge({ outcome }: { outcome: ResultOutcome }): JSX.Element {
+  const cls: Record<ResultOutcome, string> = {
+    confirmed: 'ok',
+    partial: 'blue',
+    refuted: 'err',
+    inconclusive: 'warn',
+    'build-failed': 'err'
+  }
+  return <span className={`badge ${cls[outcome]}`}>{RESULT_OUTCOME_LABELS[outcome]}</span>
 }
 
 export function OriginBadge({ origin }: { origin: string }): JSX.Element {

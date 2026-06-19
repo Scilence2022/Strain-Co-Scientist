@@ -1,9 +1,17 @@
-import type { Campaign, ReviewType, StrainDesign, EvolutionStrategy } from '@shared/domain'
+import type {
+  Campaign,
+  ExperimentalResult,
+  ReviewType,
+  StrainDesign,
+  EvolutionStrategy
+} from '@shared/domain'
 import {
   CRITERIA_KEYS,
   CRITERION_LABELS,
   DEFAULT_TOURNAMENT_CONFIG,
-  EVOLUTION_STRATEGY_LABELS
+  EVIDENCE_GRADE_LABELS,
+  EVOLUTION_STRATEGY_LABELS,
+  RESULT_OUTCOME_LABELS
 } from '@shared/domain'
 import { HOST_PRESETS, hostDisplayName } from '@shared/hosts'
 
@@ -79,6 +87,7 @@ const DESIGN_JSON_SCHEMA = `Return STRICT JSON (no prose outside the JSON) shape
   ],
   "mechanism": "the mechanistic rationale: why this should improve the objective (flux, redox, thermodynamics, regulation)",
   "predictedEffect": "qualitative predicted effect on titer/rate/yield and the reasoning",
+  "quantPrediction": { "metric": "titer|rate|yield|tolerance|other", "direction": "increase|decrease", "relativeChange": <fraction vs baseline, e.g. 0.3 for +30%>, "confidence": <0-1>, "baselineNote": "what the change is measured against" },
   "experimentalPlan": [ { "phase": "design|build|test|learn", "description": "..." } ],
   "risks": ["metabolic burden, toxicity, genetic instability, biosafety, etc."],
   "novelty": <integer 0-10>,
@@ -117,7 +126,13 @@ export type GenerationStrategy =
 export function generationPrompt(
   campaign: Campaign,
   strategy: GenerationStrategy,
-  opts: { count: number; literature?: string; metaFeedback?: string; existingTitles?: string[] }
+  opts: {
+    count: number
+    literature?: string
+    metaFeedback?: string
+    existingTitles?: string[]
+    empiricalPriors?: string
+  }
 ): string {
   const strategyInstructions: Record<GenerationStrategy, string> = {
     literature: `Strategy — Literature-grounded exploration. Use the literature evidence below to ground your reasoning. Synthesise prior findings into NOVEL design strategies rather than restating them.`,
@@ -131,6 +146,7 @@ export function generationPrompt(
 ${strategyInstructions[strategy]}
 ${opts.literature ? `\nLITERATURE EVIDENCE:\n${opts.literature}\n` : ''}
 ${opts.metaFeedback ? `\nMETA-REVIEW FEEDBACK (apply selectively, do not overfit):\n${opts.metaFeedback}\n` : ''}
+${opts.empiricalPriors ? `\nEMPIRICAL PRIORS FROM THIS CAMPAIGN'S WET-LAB RESULTS (treat as ground truth — amplify what worked, avoid what failed, and recalibrate predicted magnitudes):\n${opts.empiricalPriors}\n` : ''}
 ${opts.existingTitles?.length ? `\nEXISTING DESIGN TITLES (avoid duplicating these):\n- ${opts.existingTitles.join('\n- ')}\n` : ''}
 
 TASK: Generate ${opts.count} distinct, concrete strain-design strategies for this goal. Each must be mechanistically grounded and experimentally testable in the specified host.
@@ -148,7 +164,8 @@ export function reviewPrompt(
   design: StrainDesign,
   type: ReviewType,
   literature?: string,
-  geneEvidence?: string
+  geneEvidence?: string,
+  results?: ExperimentalResult[]
 ): string {
   const modeInstructions: Record<ReviewType, string> = {
     initial: `INITIAL REVIEW (no external tools). Quickly assess correctness, quality, novelty, and a preliminary safety check. Aim to discard flawed, trivial, or unsafe designs. Be decisive.`,
@@ -157,13 +174,14 @@ export function reviewPrompt(
     observation: `OBSERVATION REVIEW. Determine whether this design could explain or exploit known long-tail observations/phenomena in the host's metabolism that existing designs do not. Note any such observations.`,
     simulation: `SIMULATION REVIEW. Mentally simulate the mechanism and the proposed experiment step-by-step (flux rerouting, cofactor balance, expected phenotype). Identify failure scenarios and where the design could break.`,
     tournament: `TOURNAMENT REVIEW. Using recurring issues seen across the campaign, re-review this design focusing on the most common failure modes.`,
-    expert: `EXPERT REVIEW.`
+    expert: `EXPERT REVIEW.`,
+    calibration: `CALIBRATION REVIEW. The MEASURED RESULTS below are ground truth from the wet lab. Compare them against the design's quantitative prediction and predicted effect: quantify the prediction gap, diagnose mechanistically WHY the prediction missed (which assumption was wrong), and rewrite the assessment to reflect reality. Treat the measurement as the dominant evidence — score effectiveness/plausibility from what was observed, not what was hoped. If the results refute the design, say so plainly (verdict reject); if they confirm it, recognise the validated mechanism.`
   }
 
   return `${goalContext(campaign)}
 
 DESIGN UNDER REVIEW:
-${designToText(design)}
+${designToText(design, results)}
 ${literature ? `\nLITERATURE EVIDENCE:\n${literature}\n` : ''}
 ${geneEvidence ? `\nGENOMIC EVIDENCE (CodeXomics):\n${geneEvidence}\n` : ''}
 
@@ -200,7 +218,9 @@ export function matchPrompt(
   campaign: Campaign,
   a: StrainDesign,
   b: StrainDesign,
-  mode: 'debate' | 'single-turn'
+  mode: 'debate' | 'single-turn',
+  resultsA?: ExperimentalResult[],
+  resultsB?: ExperimentalResult[]
 ): string {
   const cfg = campaign.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
   const weights = cfg.weights
@@ -221,14 +241,16 @@ You are the Ranking agent running a tournament match. Compare the two candidate 
 
 Score BOTH designs 0-10 on each weighted criterion below. The system decides the winner deterministically from the weighted totals, so score honestly and independently — do NOT pre-pick a winner. Weights reflect this campaign's priorities (higher weight = more decisive); for strain engineering, effectiveness of the modification target typically dominates.
 
+CRITICAL: where a design carries MEASURED RESULTS, that is ground truth from the wet lab and must dominate your scoring — a design empirically confirmed to work outranks one that only argues well, and a refuted design must score low on effectiveness/plausibility however elegant its rationale.
+
 WEIGHTED CRITERIA:
 ${rubric}
 
 DESIGN A:
-${designToText(a)}
+${designToText(a, resultsA)}
 
 DESIGN B:
-${designToText(b)}
+${designToText(b, resultsB)}
 
 Return STRICT JSON:
 {
@@ -247,7 +269,12 @@ export function evolutionPrompt(
   campaign: Campaign,
   parents: StrainDesign[],
   strategy: EvolutionStrategy,
-  opts: { literature?: string; metaFeedback?: string }
+  opts: {
+    literature?: string
+    metaFeedback?: string
+    empiricalPriors?: string
+    parentResults?: ExperimentalResult[]
+  }
 ): string {
   const strategyInstructions: Record<EvolutionStrategy, string> = {
     'grounding-enhancement': `Improve the parent design by identifying its weaknesses, then strengthening it with literature-grounded detail and filling reasoning gaps.`,
@@ -255,7 +282,8 @@ export function evolutionPrompt(
     inspiration: `Create a NEW design inspired by the strongest ideas in the parent design(s), taken in a fresh direction.`,
     combination: `Combine the best aspects of the parent designs into a single, coherent new design.`,
     simplification: `Simplify the design for easier construction and testing while preserving the mechanism that drives the improvement.`,
-    'out-of-box': `Move away from the parents and propose a divergent, out-of-the-box design that attacks the goal from an unconventional angle.`
+    'out-of-box': `Move away from the parents and propose a divergent, out-of-the-box design that attacks the goal from an unconventional angle.`,
+    'empirical-refinement': `Refine the design in light of the MEASURED RESULTS below. Keep and amplify the interventions empirically shown to help; remove or replace the ones shown to fail or be lethal; address the observed failure modes directly. Ground the new design in what the lab actually observed, not in the original prediction.`
   }
 
   return `${goalContext(campaign)}
@@ -264,9 +292,15 @@ You are the Evolution agent. ${EVOLUTION_STRATEGY_LABELS[strategy]}: ${strategyI
 Produce a brand-new design (do not merely restate a parent). It will compete in the tournament on its own merits.
 ${opts.literature ? `\nLITERATURE EVIDENCE:\n${opts.literature}\n` : ''}
 ${opts.metaFeedback ? `\nMETA-REVIEW FEEDBACK:\n${opts.metaFeedback}\n` : ''}
+${opts.empiricalPriors ? `\nEMPIRICAL PRIORS FROM WET-LAB RESULTS (ground truth — amplify what worked, avoid what failed):\n${opts.empiricalPriors}\n` : ''}
 
 PARENT DESIGN(S):
-${parents.map((p, i) => `--- Parent ${i + 1} ---\n${designToText(p)}`).join('\n\n')}
+${parents
+  .map(
+    (p, i) =>
+      `--- Parent ${i + 1} ---\n${designToText(p, opts.parentResults?.filter((r) => r.designId === p.id))}`
+  )
+  .join('\n\n')}
 
 Return STRICT JSON shaped as a single object:
 ${DESIGN_JSON_SCHEMA}`
@@ -280,15 +314,22 @@ export function metaReviewPrompt(
   campaign: Campaign,
   topDesigns: StrainDesign[],
   reviewExcerpts: string[],
-  matchPatterns: string[]
+  matchPatterns: string[],
+  calibrationNote?: string,
+  resultsSummary?: string
 ): string {
   return `${goalContext(campaign)}
 
-You are the Meta-review agent. Synthesise insights from the reviews and tournament debates of this campaign into (1) recurring critique patterns, (2) targeted feedback for each agent to apply next cycle (NO model retraining — this feedback is simply appended to prompts), and (3) a research overview that serves as a DBTL roadmap for the scientist.
+You are the Meta-review agent. Synthesise insights from the reviews, tournament debates, and any WET-LAB RESULTS of this campaign into (1) recurring critique patterns, (2) targeted feedback for each agent to apply next cycle (NO model retraining — this feedback is simply appended to prompts), and (3) a research overview that serves as an iterative DBTL roadmap for the scientist. Where experimental results exist, they are ground truth: anchor the roadmap on what has been validated/refuted, and use the calibration signal to tell the agents where their predictions are systematically off.
 
-TOP-RANKED DESIGNS:
-${topDesigns.map((d, i) => `#${i + 1} (Elo ${d.elo}): ${d.title} — ${d.summary}`).join('\n')}
-
+TOP-RANKED DESIGNS (evidence grade dominates rank; Elo breaks ties):
+${topDesigns
+  .map(
+    (d, i) =>
+      `#${i + 1} (Elo ${d.elo}${d.evidence && d.evidence !== 'predicted-only' ? `, ${EVIDENCE_GRADE_LABELS[d.evidence]}` : ''}): ${d.title} — ${d.summary}`
+  )
+  .join('\n')}
+${resultsSummary ? `\nWET-LAB RESULTS SO FAR:\n${resultsSummary}\n` : ''}${calibrationNote ? `\nPREDICTION CALIBRATION (correct for these biases in agentFeedback):\n${calibrationNote}\n` : ''}
 REVIEW EXCERPTS:
 ${reviewExcerpts.slice(0, 20).join('\n')}
 
@@ -318,17 +359,46 @@ Return STRICT JSON:
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function designToText(d: StrainDesign): string {
+export function designToText(d: StrainDesign, results?: ExperimentalResult[]): string {
   const interventions = d.interventions
     .map((i) => `  - [${i.type}] ${i.targets.join(', ')}: ${i.details}`)
     .join('\n')
+  const prediction = d.quantPrediction
+    ? `\nQuantitative prediction: ${d.quantPrediction.direction} ${d.quantPrediction.metric}${
+        typeof d.quantPrediction.relativeChange === 'number'
+          ? ` by ~${Math.round(Math.abs(d.quantPrediction.relativeChange) * 100)}%`
+          : ''
+      }${typeof d.quantPrediction.confidence === 'number' ? ` (confidence ${d.quantPrediction.confidence})` : ''}`
+    : ''
+  const evidenceLine =
+    d.evidence && d.evidence !== 'predicted-only'
+      ? `\nEvidence grade: ${EVIDENCE_GRADE_LABELS[d.evidence]} (measured — outranks prediction)`
+      : ''
+  const measured = results?.length ? `\n${resultsToText(results)}` : ''
   return `Title: ${d.title}
 Summary: ${d.summary}
 Chassis: ${d.chassis}
 Interventions:
 ${interventions || '  (none)'}
 Mechanism: ${d.mechanism}
-Predicted effect: ${d.predictedEffect}
+Predicted effect: ${d.predictedEffect}${prediction}
 Risks: ${d.risks.join('; ') || 'none noted'}
-Novelty (self/assessed): ${d.novelty}/10`
+Novelty (self/assessed): ${d.novelty}/10${evidenceLine}${measured}`
+}
+
+/** Render a design's wet-lab results as decisive, ground-truth evidence. */
+export function resultsToText(results: ExperimentalResult[]): string {
+  const recorded = results.filter((r) => r.status === 'recorded')
+  if (!recorded.length) return ''
+  const lines = recorded.map((r) => {
+    const delta =
+      typeof r.measuredValue === 'number' && typeof r.baselineValue === 'number' && r.baselineValue !== 0
+        ? ` (${r.measuredValue}${r.unit ?? ''} vs baseline ${r.baselineValue}${r.unit ?? ''}, ${
+            r.measuredValue >= r.baselineValue ? '+' : ''
+          }${Math.round(((r.measuredValue - r.baselineValue) / r.baselineValue) * 100)}%)`
+        : ''
+    const reps = r.replicates ? ` [n=${r.replicates}]` : ''
+    return `  - ${RESULT_OUTCOME_LABELS[r.outcome]}${delta}${reps}: ${r.observations}`
+  })
+  return `MEASURED RESULTS (ground truth — weigh ABOVE predicted reasoning):\n${lines.join('\n')}`
 }

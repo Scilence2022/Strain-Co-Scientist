@@ -4,11 +4,12 @@ import type {
   Campaign,
   CampaignSnapshot,
   CampaignStatus,
+  ExperimentalResult,
   LLMProvider,
   Review,
   StrainDesign
 } from '@shared/domain'
-import { DEFAULT_TOURNAMENT_CONFIG, type TournamentConfig } from '@shared/domain'
+import { DEFAULT_TOURNAMENT_CONFIG, evidenceGradeFor, type TournamentConfig } from '@shared/domain'
 import { hostDisplayName } from '@shared/hosts'
 import type {
   CreateCampaignInput,
@@ -16,8 +17,10 @@ import type {
   ExpertDesignInput,
   ExpertReviewInput,
   McpTestResult,
-  ModelListResult
+  ModelListResult,
+  RecordResultInput
 } from '@shared/ipc'
+import { computeCalibration } from './learn/Calibration'
 import { getProvider } from '@shared/providers'
 import { Store } from '../memory/Store'
 import { createLLMClient, listModels, type LLMClient } from '../llm'
@@ -406,6 +409,104 @@ export class Engine {
     this.ctx.upsertDesign(design)
     this.ctx.log(design.campaignId, 'expert', 'info', `${flagged ? 'Flagged' : 'Unflagged'} "${design.title}" for wet-lab`)
     return design
+  }
+
+  // -- Experimental-results feedback loop (DBTL "Learn") --------------------
+
+  /**
+   * Record a wet-lab result against a design. This is the ground-truth signal
+   * that closes the DBTL loop: it re-derives the design's authoritative evidence
+   * grade (so it re-ranks against purely-predicted designs) and recomputes the
+   * campaign's prediction calibration. If the campaign has already terminated,
+   * the result is still recorded and the scientist is prompted to re-open.
+   */
+  recordExperimentalResult(input: RecordResultInput): ExperimentalResult {
+    const campaign = this.store.getCampaign(input.campaignId)
+    if (!campaign) throw new Error('campaign not found')
+    const design = this.store.getDesign(input.campaignId, input.designId)
+    if (!design) throw new Error('design not found')
+
+    const result: ExperimentalResult = {
+      id: genId(12),
+      campaignId: input.campaignId,
+      designId: input.designId,
+      createdAt: Date.now(),
+      outcome: input.outcome,
+      metric: input.metric,
+      measuredValue: input.measuredValue,
+      baselineValue: input.baselineValue,
+      unit: input.unit,
+      replicates: input.replicates,
+      observations: input.observations,
+      author: input.author?.trim() || 'Scientist',
+      status: 'recorded'
+    }
+    this.ctx.addResult(result)
+    this.refreshEvidence(input.campaignId, input.designId)
+    this.recomputeCalibration(input.campaignId)
+    this.ctx.log(
+      input.campaignId,
+      'expert',
+      result.outcome === 'refuted' || result.outcome === 'build-failed' ? 'warning' : 'success',
+      `Experimental result for "${design.title}": ${result.outcome} → evidence "${design.evidence}"`,
+      { designId: design.id, resultId: result.id, outcome: result.outcome }
+    )
+    if (campaign.status === 'completed' || campaign.status === 'stopped' || campaign.status === 'error') {
+      this.ctx.log(
+        input.campaignId,
+        'system',
+        'info',
+        'New experimental data recorded on a terminated campaign — re-open it to let the agents act on the results.'
+      )
+    }
+    void this.store.flush()
+    return result
+  }
+
+  /** Mark a result disputed (drops it from the authoritative grade) or restore it. */
+  disputeResult(campaignId: string, resultId: string, disputed: boolean): ExperimentalResult {
+    const result = this.store.getResult(campaignId, resultId)
+    if (!result) throw new Error('result not found')
+    result.status = disputed ? 'disputed' : 'recorded'
+    this.ctx.updateResult(result)
+    this.refreshEvidence(campaignId, result.designId)
+    this.recomputeCalibration(campaignId)
+    this.ctx.log(
+      campaignId,
+      'expert',
+      'info',
+      `${disputed ? 'Disputed' : 'Restored'} an experimental result`,
+      { designId: result.designId, resultId }
+    )
+    void this.store.flush()
+    return result
+  }
+
+  /** Re-open a terminated campaign so the Supervisor runs a results-informed cycle. */
+  async reopenCampaign(id: string): Promise<void> {
+    const campaign = this.store.getCampaign(id)
+    if (!campaign || this.running.has(id)) return
+    this.ctx.log(id, 'supervisor', 'info', 'Campaign re-opened to act on new experimental data')
+    this.setStatus(id, 'running')
+    void this.launch(id)
+  }
+
+  /** Re-derive and cache a design's evidence grade from its results. */
+  private refreshEvidence(campaignId: string, designId: string): void {
+    const design = this.store.getDesign(campaignId, designId)
+    if (!design) return
+    design.evidence = evidenceGradeFor(this.store.getResultsForDesign(campaignId, designId))
+    this.ctx.upsertDesign(design)
+  }
+
+  /** Recompute the campaign's prediction-calibration profile from current data. */
+  private recomputeCalibration(campaignId: string): void {
+    const designs = this.store.getDesigns(campaignId)
+    const results = this.store.getResults(campaignId)
+    const stats = this.store.getSnapshot(campaignId)?.statistics ?? []
+    const cycle = stats.length ? stats[stats.length - 1].cycle : 0
+    const profile = computeCalibration(campaignId, cycle, Date.now(), designs, results)
+    if (profile) this.ctx.addCalibration(profile)
   }
 
   private findDesign(designId: string): StrainDesign | undefined {

@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { SystemStatistics, EloSnapshot } from '@shared/domain'
+import type { CalibrationProfile, SystemStatistics, EloSnapshot } from '@shared/domain'
 
 /**
  * Elo-over-time chart — the paper's signature metric. Plots the top-10 average
@@ -87,6 +87,89 @@ export function Sparkline({ history }: { history: EloSnapshot[] }): JSX.Element 
   return (
     <svg width={W} height={H}>
       <path d={d} fill="none" stroke={up ? 'var(--green)' : 'var(--red)'} strokeWidth="1.6" />
+    </svg>
+  )
+}
+
+/**
+ * Predicted-vs-measured calibration scatter. Points on the diagonal are
+ * perfectly calibrated; above the line = over-prediction, below = under. Values
+ * are signed relative changes (fraction vs baseline).
+ */
+export function CalibrationScatter({
+  points
+}: {
+  points: { predicted: number; measured: number; label: string }[]
+}): JSX.Element {
+  const W = 320
+  const H = 240
+  const pad = 34
+  if (points.length === 0) {
+    return (
+      <div className="empty" style={{ height: H }}>
+        Record measured results with a baseline to see calibration.
+      </div>
+    )
+  }
+  const vals = points.flatMap((p) => [p.predicted, p.measured])
+  const lim = Math.max(0.1, ...vals.map((v) => Math.abs(v))) * 1.15
+  const sx = (v: number): number => pad + ((v + lim) / (2 * lim)) * (W - pad - 8)
+  const sy = (v: number): number => H - pad - ((v + lim) / (2 * lim)) * (H - pad - 8)
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+      {/* axes at zero */}
+      <line x1={sx(-lim)} x2={sx(lim)} y1={sy(0)} y2={sy(0)} stroke="var(--border-subtle)" />
+      <line x1={sx(0)} x2={sx(0)} y1={sy(-lim)} y2={sy(lim)} stroke="var(--border-subtle)" />
+      {/* perfect-calibration diagonal */}
+      <line x1={sx(-lim)} y1={sy(-lim)} x2={sx(lim)} y2={sy(lim)} stroke="var(--text-faint)" strokeDasharray="4 3" />
+      {points.map((p, i) => (
+        <circle
+          key={i}
+          cx={sx(p.predicted)}
+          cy={sy(p.measured)}
+          r="4"
+          fill={Math.sign(p.predicted) === Math.sign(p.measured) ? 'var(--green)' : 'var(--red)'}
+          opacity={0.85}
+        >
+          <title>{`${p.label}\npredicted ${Math.round(p.predicted * 100)}% · measured ${Math.round(p.measured * 100)}%`}</title>
+        </circle>
+      ))}
+      <text x={W - 6} y={sy(0) - 4} textAnchor="end" fontSize="10" fill="var(--text-faint)">
+        predicted →
+      </text>
+      <text x={sx(0) + 4} y={12} fontSize="10" fill="var(--text-faint)">
+        measured ↑
+      </text>
+    </svg>
+  )
+}
+
+/** Signed-bias-over-cycles: is the model's over/under-prediction shrinking? */
+export function BiasTrend({ profiles }: { profiles: CalibrationProfile[] }): JSX.Element {
+  const W = 320
+  const H = 120
+  const pad = { l: 30, r: 10, t: 10, b: 18 }
+  const pts = profiles.filter((p) => p.nPairs > 0)
+  if (pts.length < 1) {
+    return <div className="empty" style={{ height: H }}>No calibration history yet.</div>
+  }
+  const ys = pts.map((p) => p.signedBias)
+  const lim = Math.max(0.05, ...ys.map((v) => Math.abs(v))) * 1.2
+  const sx = (i: number): number =>
+    pad.l + (pts.length === 1 ? 0.5 : i / (pts.length - 1)) * (W - pad.l - pad.r)
+  const sy = (v: number): number => H - pad.b - ((v + lim) / (2 * lim)) * (H - pad.t - pad.b)
+  const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${sx(i).toFixed(1)},${sy(p.signedBias).toFixed(1)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block' }}>
+      <line x1={pad.l} x2={W - pad.r} y1={sy(0)} y2={sy(0)} stroke="var(--border-subtle)" />
+      <text x={2} y={sy(0) + 3} fontSize="9" fill="var(--text-faint)">0</text>
+      <path d={d} fill="none" stroke="var(--amber)" strokeWidth="2" />
+      {pts.map((p, i) => (
+        <circle key={i} cx={sx(i)} cy={sy(p.signedBias)} r="2.6" fill="var(--amber)">
+          <title>{`cycle ${p.cycle}: signed bias ${Math.round(p.signedBias * 100)} pts (n=${p.nPairs})`}</title>
+        </circle>
+      ))}
     </svg>
   )
 }

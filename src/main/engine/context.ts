@@ -4,6 +4,8 @@ import type {
   ActivitySeverity,
   AgentRole,
   AppSettings,
+  CalibrationProfile,
+  ExperimentalResult,
   Match,
   MetaReview,
   Review,
@@ -80,6 +82,21 @@ export class EngineContext {
   addStatistics(stats: SystemStatistics): void {
     this.store.addStatistics(stats)
     this.emit({ kind: 'statistics', campaignId: stats.campaignId, stats })
+  }
+
+  addResult(result: ExperimentalResult): void {
+    this.store.addResult(result)
+    this.emit({ kind: 'result-added', campaignId: result.campaignId, result })
+  }
+
+  updateResult(result: ExperimentalResult): void {
+    this.store.updateResult(result)
+    this.emit({ kind: 'result-added', campaignId: result.campaignId, result })
+  }
+
+  addCalibration(profile: CalibrationProfile): void {
+    this.store.addCalibration(profile)
+    this.emit({ kind: 'calibration-updated', campaignId: profile.campaignId, calibration: profile })
   }
 
   upsertTask(task: TaskRecord): void {

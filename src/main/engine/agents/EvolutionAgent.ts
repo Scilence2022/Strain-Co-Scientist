@@ -17,7 +17,8 @@ export class EvolutionAgent {
     parents: StrainDesign[],
     strategy: EvolutionStrategy,
     cycle: number,
-    metaFeedback?: string
+    metaFeedback?: string,
+    empiricalPriors?: string
   ): Promise<StrainDesign | null> {
     if (!parents.length) return null
 
@@ -30,10 +31,20 @@ export class EvolutionAgent {
       ])
       if (finding) literature = finding.summary
     }
+    // Surface any wet-lab results on the parents so refinement is grounded in
+    // what was actually observed (essential for the empirical-refinement strategy).
+    const parentResults = parents.flatMap((p) =>
+      this.ctx.store.getResultsForDesign(campaign.id, p.id)
+    )
     const res = await this.ctx.llm.complete({
       agent: 'evolution',
       system: SYSTEM_PREAMBLE,
-      prompt: evolutionPrompt(campaign, parents, strategy, { literature, metaFeedback }),
+      prompt: evolutionPrompt(campaign, parents, strategy, {
+        literature,
+        metaFeedback,
+        empiricalPriors,
+        parentResults
+      }),
       effort: 'medium',
       think: true,
       maxTokens: 4000

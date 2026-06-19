@@ -1,5 +1,5 @@
 import { useStore } from '../store/useStore'
-import { EloChart, ChartLegend, StackBar } from '../components/Charts'
+import { EloChart, ChartLegend, StackBar, BiasTrend } from '../components/Charts'
 import { Empty, clockTime } from '../components/ui'
 import { IconBeaker } from '../components/Icons'
 import { AGENT_LABELS, type AgentRole, type SystemStatistics } from '@shared/domain'
@@ -25,6 +25,15 @@ export function Dashboard(): JSX.Element {
   }
 
   const { designs, reviews, matches, statistics, events, tasks } = snapshot
+  const results = snapshot.results ?? []
+  const calibration = snapshot.calibration ?? []
+  const latestCal = calibration[calibration.length - 1]
+  const evidenceSegments = [
+    { label: 'Confirmed', value: designs.filter((d) => d.evidence === 'measured-confirmed').length, color: 'var(--green)' },
+    { label: 'Partial', value: designs.filter((d) => d.evidence === 'measured-partial').length, color: 'var(--blue)' },
+    { label: 'Refuted', value: designs.filter((d) => d.evidence === 'measured-refuted').length, color: 'var(--red)' }
+  ]
+  const measuredCount = evidenceSegments.reduce((s, x) => s + x.value, 0)
   const active = designs.filter((d) => d.status === 'active' || d.status === 'flagged')
   const sortedElo = [...active].sort((a, b) => b.elo - a.elo)
   const bestElo = sortedElo[0]?.elo ?? 1200
@@ -121,6 +130,40 @@ export function Dashboard(): JSX.Element {
         </div>
       </div>
 
+      {(results.length > 0 || measuredCount > 0) && (
+        <div className="grid" style={{ gridTemplateColumns: '1.4fr 1fr' }}>
+          <div className="card">
+            <div className="card-head">
+              <div className="card-title">Prediction calibration</div>
+              {latestCal ? (
+                <span className="badge">{latestCal.nPairs} measured pair{latestCal.nPairs === 1 ? '' : 's'}</span>
+              ) : (
+                <span className="faint" style={{ fontSize: 'var(--fs-xs)' }}>awaiting measured values</span>
+              )}
+            </div>
+            <BiasTrend profiles={calibration} />
+            {latestCal && (
+              <div className="row wrap gap-md" style={{ marginTop: 10 }}>
+                <CalMetric label="Signed bias" value={`${signed(latestCal.signedBias)} pts`} hint="positive = over-optimistic" />
+                <CalMetric label="Mean abs err" value={`${Math.round(latestCal.meanAbsError * 100)} pts`} />
+                <CalMetric label="Spearman" value={latestCal.spearman.toFixed(2)} hint="predicted vs measured rank" />
+                {typeof latestCal.brier === 'number' && <CalMetric label="Brier" value={latestCal.brier.toFixed(2)} />}
+              </div>
+            )}
+          </div>
+          <div className="card">
+            <div className="section-title">Evidence standing ({measuredCount} measured)</div>
+            {measuredCount === 0 ? (
+              <span className="faint" style={{ fontSize: 'var(--fs-sm)' }}>
+                {results.length} result{results.length === 1 ? '' : 's'} recorded; none yet decisive.
+              </span>
+            ) : (
+              <StackBar segments={evidenceSegments} />
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
         <div className="card">
           <div className="card-head">
@@ -171,6 +214,24 @@ function Stat({ label, value, sub }: { label: string; value: number | string; su
       <span className="stat-label">{label}</span>
       <span className="stat-value">{value}</span>
       {sub && <span className="stat-sub">{sub}</span>}
+    </div>
+  )
+}
+
+function signed(fraction: number): string {
+  const pts = Math.round(fraction * 100)
+  return `${pts >= 0 ? '+' : ''}${pts}`
+}
+
+function CalMetric({ label, value, hint }: { label: string; value: string; hint?: string }): JSX.Element {
+  return (
+    <div className="col" style={{ minWidth: 96 }}>
+      <span className="faint" style={{ fontSize: 'var(--fs-xs)' }} title={hint}>
+        {label}
+      </span>
+      <span className="mono" style={{ fontSize: 'var(--fs-md)' }}>
+        {value}
+      </span>
     </div>
   )
 }

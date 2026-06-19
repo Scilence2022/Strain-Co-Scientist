@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { Sparkline } from '../components/Charts'
-import { DesignStatusBadge, Empty, OriginBadge, VerdictBadge } from '../components/ui'
+import { DesignStatusBadge, Empty, EvidenceBadge, OriginBadge, VerdictBadge } from '../components/ui'
+import { RecordResultForm, ResultsList } from '../components/Results'
 import { IconBeaker, IconClose, IconFlag } from '../components/Icons'
 import {
+  compareDesigns,
   CRITERION_LABELS,
   EVOLUTION_STRATEGY_LABELS,
   INTERVENTION_LABELS,
@@ -23,7 +25,7 @@ export function DesignsExplorer(): JSX.Element {
     if (filter === 'active') list = list.filter((d) => d.status === 'active' || d.status === 'flagged')
     else if (filter === 'flagged') list = list.filter((d) => d.status === 'flagged')
     else if (filter === 'rejected') list = list.filter((d) => d.status === 'rejected')
-    return [...list].sort((a, b) => b.elo - a.elo)
+    return [...list].sort(compareDesigns)
   }, [snapshot?.designs, filter])
 
   if (!snapshot) {
@@ -106,7 +108,10 @@ export function DesignsExplorer(): JSX.Element {
                   </td>
                   <td className="num">{d.novelty}</td>
                   <td>
-                    <DesignStatusBadge status={d.status} />
+                    <div className="row wrap gap-sm">
+                      <DesignStatusBadge status={d.status} />
+                      <EvidenceBadge grade={d.evidence} />
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -121,8 +126,9 @@ export function DesignsExplorer(): JSX.Element {
 }
 
 export function DesignDrawer({ design, onClose }: { design: StrainDesign; onClose: () => void }): JSX.Element {
-  const { snapshot } = useStore()
+  const { snapshot, refreshSnapshot } = useStore()
   const reviews = snapshot?.reviews.filter((r) => r.designId === design.id) ?? []
+  const results = snapshot?.results?.filter((r) => r.designId === design.id) ?? []
   const parents = (design.lineage.parentIds ?? [])
     .map((id) => snapshot?.designs.find((d) => d.id === id))
     .filter(Boolean) as StrainDesign[]
@@ -135,9 +141,10 @@ export function DesignDrawer({ design, onClose }: { design: StrainDesign; onClos
       <div className="drawer">
         <div className="drawer-head">
           <div style={{ flex: 1 }}>
-            <div className="row gap-sm" style={{ marginBottom: 4 }}>
+            <div className="row wrap gap-sm" style={{ marginBottom: 4 }}>
               <OriginBadge origin={design.origin} />
               <DesignStatusBadge status={design.status} />
+              <EvidenceBadge grade={design.evidence} />
               <span className="badge accent">Elo {design.elo}</span>
             </div>
             <h3 style={{ fontSize: 'var(--fs-lg)' }}>{design.title}</h3>
@@ -179,6 +186,15 @@ export function DesignDrawer({ design, onClose }: { design: StrainDesign; onClos
           <div className="detail-block">
             <h4>Predicted effect</h4>
             <p>{design.predictedEffect || '—'}</p>
+            {design.quantPrediction && typeof design.quantPrediction.relativeChange === 'number' && (
+              <div className="faint" style={{ fontSize: 'var(--fs-sm)' }}>
+                Quantified: {design.quantPrediction.direction} {design.quantPrediction.metric} by ~
+                {Math.round(Math.abs(design.quantPrediction.relativeChange) * 100)}%
+                {typeof design.quantPrediction.confidence === 'number'
+                  ? ` (confidence ${design.quantPrediction.confidence})`
+                  : ''}
+              </div>
+            )}
           </div>
 
           {design.experimentalPlan.length > 0 && (
@@ -275,6 +291,15 @@ export function DesignDrawer({ design, onClose }: { design: StrainDesign; onClos
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="detail-block">
+            <h4>Wet-lab results ({results.length})</h4>
+            <ResultsList results={results} onChanged={refreshSnapshot} />
+            <div style={{ marginTop: 12 }}>
+              <div className="section-title">Record a result</div>
+              <RecordResultForm campaignId={design.campaignId} designId={design.id} onDone={refreshSnapshot} />
+            </div>
           </div>
 
           {design.citations.length > 0 && (

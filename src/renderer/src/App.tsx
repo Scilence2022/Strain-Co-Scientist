@@ -4,6 +4,7 @@ import {
   IconCampaigns,
   IconDashboard,
   IconExpert,
+  IconExperiment,
   IconGraph,
   IconLog,
   IconOverview,
@@ -19,6 +20,7 @@ import { DesignsExplorer } from './views/DesignsExplorer'
 import { TournamentView } from './views/TournamentView'
 import { ProximityView } from './views/ProximityView'
 import { ResearchOverview } from './views/ResearchOverview'
+import { ExperimentsView } from './views/ExperimentsView'
 import { ExpertView } from './views/ExpertView'
 import { ActivityLog } from './views/ActivityLog'
 import { Settings } from './views/Settings'
@@ -30,6 +32,7 @@ export const NAV: { key: ViewKey; label: string; icon: (p: { size?: number }) =>
   { key: 'tournament', label: 'Tournament', icon: IconTournament },
   { key: 'proximity', label: 'Proximity map', icon: IconGraph },
   { key: 'overview', label: 'Research overview', icon: IconOverview },
+  { key: 'experiments', label: 'Experiments', icon: IconExperiment },
   { key: 'expert', label: 'Expert-in-the-loop', icon: IconExpert },
   { key: 'log', label: 'Activity log', icon: IconLog }
 ]
@@ -141,6 +144,8 @@ function renderView(view: ViewKey): JSX.Element {
       return <ProximityView />
     case 'overview':
       return <ResearchOverview />
+    case 'experiments':
+      return <ExperimentsView />
     case 'expert':
       return <ExpertView />
     case 'log':

@@ -164,6 +164,17 @@ export const IconRefresh = (p: P) => (
   </S>
 )
 
+export const IconExperiment = (p: P) => (
+  <S {...p}>
+    <>
+      <path d="M4 20h16" />
+      <path d="M4 20V10M9 20V6M14 20v-8M19 20V4" />
+      <circle cx="9" cy="6" r="1.4" />
+      <circle cx="14" cy="12" r="1.4" />
+    </>
+  </S>
+)
+
 export const IconDownload = (p: P) => (
   <S {...p}>
     <>

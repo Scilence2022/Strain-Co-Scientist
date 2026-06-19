@@ -4,6 +4,7 @@ import type {
   DesignOrigin,
   Intervention,
   InterventionType,
+  QuantPrediction,
   StrainDesign
 } from '@shared/domain'
 import { hostDisplayName } from '@shared/hosts'
@@ -39,6 +40,24 @@ function coercePlan(raw: any): DBTLStep[] {
     phase: phases.includes(r?.phase) ? r.phase : 'design',
     description: String(r?.description ?? '')
   }))
+}
+
+const QP_METRICS: QuantPrediction['metric'][] = ['titer', 'rate', 'yield', 'tolerance', 'other']
+
+/** Coerce a loosely-parsed structured prediction; returns undefined if unusable. */
+function coerceQuantPrediction(raw: any): QuantPrediction | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const metric = QP_METRICS.includes(raw.metric) ? raw.metric : 'other'
+  const direction = raw.direction === 'decrease' ? 'decrease' : 'increase'
+  const rc = Number(raw.relativeChange)
+  const conf = Number(raw.confidence)
+  const pred: QuantPrediction = { metric, direction }
+  if (Number.isFinite(rc)) pred.relativeChange = Math.abs(rc)
+  if (Number.isFinite(conf)) pred.confidence = Math.max(0, Math.min(1, conf))
+  if (raw.baselineNote) pred.baselineNote = String(raw.baselineNote)
+  // Only keep a prediction that carries at least a magnitude — a bare
+  // metric/direction adds nothing the free-text predictedEffect doesn't.
+  return typeof pred.relativeChange === 'number' ? pred : undefined
 }
 
 /**
@@ -83,6 +102,7 @@ export function coerceDesign(
     interventions: coerceInterventions(obj.interventions),
     mechanism: String(obj.mechanism ?? ''),
     predictedEffect: String(obj.predictedEffect ?? ''),
+    quantPrediction: coerceQuantPrediction(obj.quantPrediction),
     experimentalPlan: coercePlan(obj.experimentalPlan),
     constructSuggestions: [],
     risks: Array.isArray(obj.risks) ? obj.risks.map(String) : [],

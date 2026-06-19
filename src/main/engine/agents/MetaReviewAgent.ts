@@ -1,7 +1,16 @@
-import type { AgentRole, Campaign, MetaReview, ResearchOverviewArea, StrainDesign } from '@shared/domain'
+import type {
+  AgentRole,
+  Campaign,
+  ExperimentalResult,
+  MetaReview,
+  ResearchOverviewArea,
+  StrainDesign
+} from '@shared/domain'
+import { compareDesigns, RESULT_OUTCOME_LABELS } from '@shared/domain'
 import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { metaReviewPrompt, SYSTEM_PREAMBLE } from '../prompts'
+import { calibrationNote } from '../learn/Calibration'
 
 /** True when a meta-review carries no usable research overview (parse/content failure). */
 export function isEmptyOverview(meta: MetaReview): boolean {
@@ -27,6 +36,25 @@ function titleMatches(designTitle: string, candidate: string): boolean {
   return shared.length >= 2
 }
 
+/** Short, model-facing summary of recorded wet-lab results, keyed to design titles. */
+function summarizeResults(results: ExperimentalResult[], designs: StrainDesign[]): string {
+  const titles = new Map(designs.map((d) => [d.id, d.title]))
+  const recorded = results.filter((r) => r.status === 'recorded')
+  if (!recorded.length) return ''
+  return recorded
+    .slice(-20)
+    .map((r) => {
+      const delta =
+        typeof r.measuredValue === 'number' && typeof r.baselineValue === 'number' && r.baselineValue !== 0
+          ? ` (${r.measuredValue >= r.baselineValue ? '+' : ''}${Math.round(
+              ((r.measuredValue - r.baselineValue) / r.baselineValue) * 100
+            )}%)`
+          : ''
+      return `- ${titles.get(r.designId) ?? 'design'}: ${RESULT_OUTCOME_LABELS[r.outcome]}${delta} — ${r.observations}`
+    })
+    .join('\n')
+}
+
 /**
  * Meta-review agent. Synthesises recurring critique patterns into feedback
  * appended to other agents' prompts (improvement without backprop), and at the
@@ -39,12 +67,14 @@ export class MetaReviewAgent {
   async generate(campaign: Campaign, cycle: number): Promise<MetaReview> {
     const snapshot = this.ctx.store.getSnapshot(campaign.id)
     const designs = (snapshot?.designs ?? []).filter((d) => d.status !== 'rejected')
-    const top = [...designs].sort((a, b) => b.elo - a.elo).slice(0, 8)
+    const top = [...designs].sort(compareDesigns).slice(0, 8)
     const reviewExcerpts = (snapshot?.reviews ?? [])
       .slice(-30)
       .map((r) => `[${r.type}/${r.verdict}] ${r.narrative}`)
     const matchPatterns = (snapshot?.matches ?? []).slice(-30).map((m) => m.rationale)
-    return this.llm(campaign, cycle, top, reviewExcerpts, matchPatterns)
+    const resultsSummary = summarizeResults(snapshot?.results ?? [], designs)
+    const calNote = calibrationNote(this.ctx.store.latestCalibration(campaign.id))
+    return this.llm(campaign, cycle, top, reviewExcerpts, matchPatterns, calNote, resultsSummary)
   }
 
   async synthesize(campaign: Campaign, cycle: number): Promise<MetaReview> {
@@ -98,12 +128,14 @@ export class MetaReviewAgent {
     cycle: number,
     top: StrainDesign[],
     reviewExcerpts: string[],
-    matchPatterns: string[]
+    matchPatterns: string[],
+    calNote: string,
+    resultsSummary: string
   ): Promise<MetaReview> {
     const res = await this.ctx.llm.complete({
       agent: 'meta-review',
       system: SYSTEM_PREAMBLE,
-      prompt: metaReviewPrompt(campaign, top, reviewExcerpts, matchPatterns),
+      prompt: metaReviewPrompt(campaign, top, reviewExcerpts, matchPatterns, calNote, resultsSummary),
       effort: 'high',
       think: true,
       // The overview is a large structured object; with adaptive thinking the

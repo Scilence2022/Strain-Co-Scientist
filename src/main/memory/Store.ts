@@ -17,8 +17,10 @@ import { join } from 'node:path'
 import type {
   ActivityEvent,
   AppSettings,
+  CalibrationProfile,
   Campaign,
   CampaignSnapshot,
+  ExperimentalResult,
   LLMProvider,
   Match,
   MetaReview,
@@ -29,7 +31,7 @@ import type {
   SystemStatistics,
   TaskRecord
 } from '@shared/domain'
-import { DEFAULT_SETTINGS } from '@shared/domain'
+import { DEFAULT_SETTINGS, evidenceGradeFor } from '@shared/domain'
 
 const MAX_EVENTS = 2000
 
@@ -42,8 +44,27 @@ function emptySnapshot(campaign: Campaign): CampaignSnapshot {
     metaReviews: [],
     statistics: [],
     tasks: [],
-    events: []
+    events: [],
+    results: [],
+    calibration: []
   }
+}
+
+/**
+ * Backfill collections added after a snapshot was first written. `loadAll` casts
+ * persisted JSON straight to CampaignSnapshot (no schema migration), so older
+ * stores lack `results`/`calibration`; without this they'd be `undefined` and
+ * every reader would have to guard. Also recomputes each design's cached
+ * evidence grade from its results so the comparators stay authoritative even if
+ * the cache was written by an older build.
+ */
+function normalizeSnapshot(snap: CampaignSnapshot): CampaignSnapshot {
+  if (!Array.isArray(snap.results)) snap.results = []
+  if (!Array.isArray(snap.calibration)) snap.calibration = []
+  for (const d of snap.designs) {
+    d.evidence = evidenceGradeFor(snap.results.filter((r) => r.designId === d.id))
+  }
+  return snap
 }
 
 export class Store {
@@ -92,7 +113,7 @@ export class Store {
       const file = join(this.campaignsDir, dir, 'snapshot.json')
       if (!existsSync(file)) continue
       try {
-        const snap = JSON.parse(readFileSync(file, 'utf8')) as CampaignSnapshot
+        const snap = normalizeSnapshot(JSON.parse(readFileSync(file, 'utf8')) as CampaignSnapshot)
         this.cache.set(snap.campaign.id, snap)
       } catch {
         // skip corrupt campaign
@@ -161,6 +182,54 @@ export class Store {
   /** Live (non-cloned) matches for the campaign — used by the Elo replay. */
   getMatches(campaignId: string): Match[] {
     return this.cache.get(campaignId)?.matches ?? []
+  }
+
+  // -- Experimental results / calibration -----------------------------------
+
+  addResult(result: ExperimentalResult): void {
+    const snap = this.cache.get(result.campaignId)
+    if (!snap) return
+    snap.results.push(result)
+    this.markDirty(result.campaignId)
+  }
+
+  /** Replace a result in place (e.g. dispute/restore); no-op if not found. */
+  updateResult(result: ExperimentalResult): void {
+    const snap = this.cache.get(result.campaignId)
+    if (!snap) return
+    const idx = snap.results.findIndex((r) => r.id === result.id)
+    if (idx >= 0) {
+      snap.results[idx] = result
+      this.markDirty(result.campaignId)
+    }
+  }
+
+  getResults(campaignId: string): ExperimentalResult[] {
+    return this.cache.get(campaignId)?.results ?? []
+  }
+
+  getResultsForDesign(campaignId: string, designId: string): ExperimentalResult[] {
+    return this.getResults(campaignId).filter((r) => r.designId === designId)
+  }
+
+  getResult(campaignId: string, resultId: string): ExperimentalResult | undefined {
+    return this.cache.get(campaignId)?.results.find((r) => r.id === resultId)
+  }
+
+  addCalibration(profile: CalibrationProfile): void {
+    const snap = this.cache.get(profile.campaignId)
+    if (!snap) return
+    snap.calibration.push(profile)
+    this.markDirty(profile.campaignId)
+  }
+
+  getCalibration(campaignId: string): CalibrationProfile[] {
+    return this.cache.get(campaignId)?.calibration ?? []
+  }
+
+  latestCalibration(campaignId: string): CalibrationProfile | undefined {
+    const list = this.cache.get(campaignId)?.calibration ?? []
+    return list[list.length - 1]
   }
 
   // -- Reviews / matches / meta-reviews / stats / tasks / events ------------

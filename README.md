@@ -57,6 +57,33 @@ The DBTL experiment loop is drawn from *Robin* (Ghareeb et al., *Nature* 2026),
 and the scientist-in-the-loop "collaborator" framing from the biomedical AI
 agents review (2024).
 
+### Closing the loop — experimental-results feedback (DBTL "Learn")
+
+The wet-lab path is **closed**, not just flagged. The scientist records an
+`ExperimentalResult` (outcome + measured-vs-baseline value + observations)
+against any design, and it flows back through the whole engine:
+
+- **Authoritative evidence grade** — a design's results derive an evidence grade
+  (`measured-confirmed > measured-partial > predicted-only > measured-refuted`)
+  that is the top-level ranking key (`compareDesigns`): a design that *worked in
+  the lab* always outranks one that merely argues well, while Elo still orders
+  the unmeasured frontier. The Elo math is untouched, so the deterministic
+  ladder replay is preserved — measured outcomes enter only as a pure function
+  of persisted data.
+- **Anchored reasoning** — measured results are injected into tournament match
+  prompts as decisive evidence, drive a dedicated **calibration** review mode,
+  and seed an **empirical-refinement** evolution strategy + campaign-level priors
+  (amplify what worked, avoid what failed).
+- **Prediction calibration** — each design commits to a structured
+  `QuantPrediction`; a per-cycle `CalibrationProfile` (signed bias, MAE,
+  Spearman, Brier, per-intervention-class bias) feeds back into agent prompts so
+  the system measurably learns to predict better.
+- **Asynchronous re-opening** — results recorded weeks later on a terminated
+  campaign re-open it for a results-informed cycle (`reopenCampaign`); a
+  campaign won't terminate while there's unprocessed lab data.
+
+See `src/main/engine/learn/Calibration.ts` and the `Experiments` view.
+
 ### Tech stack
 
 - Electron + electron-vite, TypeScript end-to-end.
@@ -98,17 +125,18 @@ running a campaign.
 
 ## The UI
 
-A left-nav workstation shell with nine views:
+A left-nav workstation shell with ten views:
 
 | View | Purpose |
 | --- | --- |
-| **Dashboard** | Live system state: Elo-over-compute chart, design counts, agent utilization, strategy win-rates, worker queue, activity feed. |
+| **Dashboard** | Live system state: Elo-over-compute chart, prediction-calibration panel, design counts, agent utilization, strategy win-rates, worker queue, activity feed. |
 | **Campaigns** | Create/configure campaigns (product, host, objective, constraints, compute budget) and control runs. |
-| **Designs** | Ranked, filterable table + detail drawer (interventions, mechanism, DBTL plan, constructs, reviews, Elo sparkline, lineage). |
+| **Designs** | Evidence-then-Elo ranked, filterable table + detail drawer (interventions, mechanism, DBTL plan, constructs, reviews, wet-lab results, Elo sparkline, lineage). |
 | **Tournament** | Match history with expandable scientific-debate transcripts. |
 | **Proximity map** | d3-force cluster map of the explored design space. |
 | **Research overview** | Meta-review roadmap, recurring critique patterns, suggested collaborators. |
-| **Expert-in-the-loop** | Refine the goal, contribute your own design, write reviews, flag designs for the wet lab. |
+| **Experiments** | Record/ dispute wet-lab results, predicted-vs-measured calibration scatter, signed-bias trend, per-intervention-class bias. |
+| **Expert-in-the-loop** | Refine the goal, contribute your own design, write reviews, flag designs for the wet lab, record experimental results, re-open campaigns. |
 | **Activity log** | Filterable structured event log. |
 | **Settings** | LLM provider/models, MCP servers, engine, and safety configuration. |
 

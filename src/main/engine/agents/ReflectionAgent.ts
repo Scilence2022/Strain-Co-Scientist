@@ -64,9 +64,17 @@ export class ReflectionAgent {
       }
     }
 
-    const prompt = `${reviewPrompt(campaign, design, type, literature, geneEvidence)}${
-      metaFeedback ? `\n\nMETA-REVIEW FEEDBACK TO HONOUR:\n${metaFeedback}` : ''
-    }`
+    // Ground the review on any wet-lab results for this design — decisive for a
+    // calibration review, and useful context for every other mode.
+    const results = this.ctx.store.getResultsForDesign(campaign.id, design.id)
+    const prompt = `${reviewPrompt(
+      campaign,
+      design,
+      type,
+      literature,
+      geneEvidence,
+      results.length ? results : undefined
+    )}${metaFeedback ? `\n\nMETA-REVIEW FEEDBACK TO HONOUR:\n${metaFeedback}` : ''}`
 
     const res = await this.ctx.llm.complete({
       agent: 'reflection',
