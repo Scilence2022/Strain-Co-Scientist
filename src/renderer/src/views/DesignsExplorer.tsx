@@ -56,6 +56,23 @@ export function DesignsExplorer(): JSX.Element {
         </div>
       </div>
 
+      <div className="faint" style={{ fontSize: 'var(--fs-xs)', marginBottom: 12, maxWidth: 760 }}>
+        {filter === 'rejected' ? (
+          <>
+            <b>Rejected</b> = failed the initial safety/feasibility review and never entered the
+            tournament. This is <b>not</b> an Elo cut-off — these designs keep the default Elo 1200
+            (W/L 0/0) because they play no matches. A design with a <i>lower</i> Elo can still be
+            “In tournament”: it passed the gate but has been losing matches. Elo ranks the surviving
+            designs; it never eliminates them.
+          </>
+        ) : (
+          <>
+            Sorted by evidence grade, then Elo. <b>Rejected</b> ≠ low Elo: rejection is a
+            safety/feasibility gate, while Elo only ranks the designs that passed it.
+          </>
+        )}
+      </div>
+
       {designs.length === 0 ? (
         <Empty title="No designs in this view" hint="Run the campaign to generate and rank strain designs." />
       ) : (

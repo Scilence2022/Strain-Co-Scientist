@@ -24,15 +24,27 @@ function pad(n: number): string {
 }
 
 export function DesignStatusBadge({ status }: { status: DesignStatus }): JSX.Element {
-  const map: Record<DesignStatus, { cls: string; label: string }> = {
-    draft: { cls: '', label: 'Draft' },
-    reviewing: { cls: 'blue', label: 'Reviewing' },
-    active: { cls: 'accent', label: 'In tournament' },
-    rejected: { cls: 'err', label: 'Rejected' },
-    flagged: { cls: 'warn', label: 'Flagged' }
+  const map: Record<DesignStatus, { cls: string; label: string; hint: string }> = {
+    draft: { cls: '', label: 'Draft', hint: 'Generated, awaiting its initial review.' },
+    reviewing: { cls: 'blue', label: 'Reviewing', hint: 'Under review.' },
+    active: {
+      cls: 'accent',
+      label: 'In tournament',
+      hint: 'Passed the safety/feasibility gate. Competing on Elo — a low Elo means lower-ranked, not eliminated.'
+    },
+    rejected: {
+      cls: 'err',
+      label: 'Rejected',
+      hint: 'Failed the initial safety/feasibility review — never entered the tournament. This is independent of Elo (rejected designs keep the default 1200 because they play no matches).'
+    },
+    flagged: { cls: 'warn', label: 'Flagged', hint: 'Flagged for the wet lab.' }
   }
   const m = map[status]
-  return <span className={`badge ${m.cls}`}>{m.label}</span>
+  return (
+    <span className={`badge ${m.cls}`} title={m.hint}>
+      {m.label}
+    </span>
+  )
 }
 
 export function VerdictBadge({ verdict }: { verdict: Review['verdict'] }): JSX.Element {
