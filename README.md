@@ -123,6 +123,133 @@ The agents call a live LLM. Open **Settings**, add an Anthropic API key (and,
 optionally, the deep-research / CodeXomics MCP servers for grounding) before
 running a campaign.
 
+---
+
+## Using Strain Co-Scientist
+
+### Step 1 — Configure
+
+Open **Settings** before running anything.
+
+**Providers** — enable at least one LLM provider and paste your API key.
+Anthropic (Claude) and DeepSeek are both supported out of the box; an
+OpenAI-compatible shim handles any other provider.
+
+![Settings — Providers](docs/screenshots/12_settings_providers.png)
+
+**Model Selection** — choose the high-tier model (Generation / Reflection /
+Meta-review) and the fast-tier model (Ranking / Proximity / Evolution). The
+defaults (`claude-opus-4-8` / `claude-sonnet-4-6`) give the best results;
+per-agent overrides are available for cost control.
+
+![Settings — Model Selection](docs/screenshots/13_settings_models.png)
+
+**MCP Servers** *(optional)* — connect the **Deep Research** server for
+literature grounding and **CodeXomics** for genomic data, BLAST, and construct
+design. Both degrade gracefully when unreachable.
+
+![Settings — MCP Servers](docs/screenshots/14_settings_mcp.png)
+
+---
+
+### Step 2 — Create a campaign
+
+Go to **Campaigns → + New campaign**. Set:
+- **Product** — the target molecule (e.g. *lysine*, *mevalonate*)
+- **Host** — the production organism (e.g. *E. coli*, *C. glutamicum*)
+- **Objective** — what to optimise (titer / rate / yield)
+- **Constraints** — budget, safety level, forbidden interventions
+- **Compute budget** — number of agent cycles (more cycles = deeper search)
+
+Hit **Run**. The campaign is saved locally and survives restarts.
+
+![Campaigns — campaign list](docs/screenshots/02_campaigns.png)
+
+---
+
+### Step 3 — Monitor progress
+
+The **Dashboard** shows the full system state in real time: the Elo-over-compute
+chart (test-time scaling), strategy effectiveness (Generation vs. Evolution
+win-rates), agent utilisation across the worker queue, designs-by-status
+breakdown, and the DBTL evidence standing (confirmed / partial / refuted counts).
+
+![Dashboard](docs/screenshots/01_dashboard.png)
+
+The **Activity log** streams every structured agent event — filter by agent role
+or severity to track what the system is doing at any moment.
+
+![Activity log](docs/screenshots/11_activity_log.png)
+
+---
+
+### Step 4 — Explore the design space
+
+**Designs** lists every generated strategy in evidence-then-Elo order: a design
+confirmed in the lab always ranks above the predicted-only frontier regardless of
+Elo. The "Confirmed in lab" badge marks lab-verified winners.
+
+![Designs — ranked table](docs/screenshots/03_designs.png)
+
+Click any row to open the **design drawer**, which shows the full intervention
+list, mechanistic rationale, DBTL experimental plan, construct and primer
+suggestions, risk assessment, all agent reviews, and an Elo sparkline.
+
+![Design drawer — interventions and rationale](docs/screenshots/07_design_drawer.png)
+
+**Tournament** shows every Elo match as a side-by-side scientific debate. Expand
+any match to read the full transcript and scoring rationale.
+
+![Tournament — match history](docs/screenshots/04_tournament.png)
+
+**Proximity map** renders the explored design space as a d3-force cluster
+graph. Node size = Elo; colour = cluster. Click any node to inspect the design.
+
+![Proximity map](docs/screenshots/05_proximity_map.png)
+
+**Research overview** is the Meta-review agent's synthesis: an engineering
+roadmap, recurring critique patterns, and suggested collaborators — updated each
+cycle.
+
+![Research overview](docs/screenshots/06_research_overview.png)
+
+---
+
+### Step 5 — Record wet-lab results (DBTL Learn)
+
+Scroll to the bottom of the design drawer and fill in **Record a result**:
+choose the outcome (confirmed / partial / refuted), enter the measured value and
+baseline, and add observations. Submit, and the result flows back through the
+full engine immediately.
+
+![Design drawer — wet-lab result form](docs/screenshots/08_design_drawer_results.png)
+
+The **Experiments** view shows every recorded result alongside the predicted
+value, a calibration scatter plot, and a signed-bias trend. The prediction
+calibration panel on the Dashboard is also updated each cycle so agents learn to
+predict better over time.
+
+![Experiments — calibration view](docs/screenshots/09_experiments.png)
+
+---
+
+### Step 6 — Expert-in-the-loop controls
+
+The **Expert-in-the-loop** surface gives you direct editorial control without
+touching settings:
+
+- **Refine goal** — amend the campaign objective mid-run
+- **Contribute a design** — inject your own hypothesis as a first-class design
+  that enters the tournament
+- **Write a review** — add a manual expert review to any design
+- **Flag for wet lab** — surface a design for prioritised experimental testing
+- **Re-open a campaign** — restart a terminated campaign after recording new lab
+  results, so the system reasons over fresh evidence
+
+![Expert-in-the-loop](docs/screenshots/10_expert_in_the_loop.png)
+
+---
+
 ## The UI
 
 A left-nav workstation shell with ten views:
