@@ -37,7 +37,8 @@ export class TaskQueue {
 
   /** Run a batch of tasks with the configured concurrency limit. */
   async runBatch(tasks: AgentTask[]): Promise<void> {
-    const concurrency = Math.max(1, this.ctx.settings.run.concurrency)
+    const configured = this.ctx.settings.run.concurrency
+    const concurrency = Number.isFinite(configured) ? Math.max(1, Math.min(32, Math.floor(configured))) : 1
     const records = tasks.map((t) => this.createRecord(t))
 
     let cursor = 0
@@ -88,16 +89,16 @@ export class TaskQueue {
     this.ctx.upsertTask(record)
     try {
       const result = await task.run()
-      record.state = 'done'
+      record.state = this.cancelled ? 'cancelled' : 'done'
       record.finishedAt = Date.now()
       if (Array.isArray(result)) record.resultDesignIds = result
       this.ctx.upsertTask(record)
     } catch (err) {
-      record.state = 'failed'
+      record.state = this.cancelled ? 'cancelled' : 'failed'
       record.finishedAt = Date.now()
       record.error = err instanceof Error ? err.message : String(err)
       this.ctx.upsertTask(record)
-      this.ctx.log(this.campaignId, task.agent, 'error', `${task.label} failed: ${record.error}`)
+      if (!this.cancelled) this.ctx.log(this.campaignId, task.agent, 'error', `${task.label} failed: ${record.error}`)
     }
   }
 }

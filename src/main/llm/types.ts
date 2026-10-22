@@ -19,6 +19,8 @@ export interface LLMRequest {
   think?: boolean
   /** Upper bound on output tokens. */
   maxTokens?: number
+  /** Cancels a campaign's in-flight network request. */
+  signal?: AbortSignal
 }
 
 /**

@@ -79,6 +79,7 @@ export class GenerationAgent {
           rawSnippet: res.text.slice(0, 400)
         }
       )
+      throw new Error(`Generation returned no usable designs (stop reason: ${res.stopReason ?? 'unknown'})`)
     } else {
       this.ctx.log(
         campaign.id,

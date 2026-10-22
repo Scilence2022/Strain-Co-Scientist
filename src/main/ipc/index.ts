@@ -2,6 +2,8 @@ import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import type { ExportFileInput, ExportFileResult, IpcApiChannel } from '@shared/ipc'
 import type { Engine } from '../engine/Engine'
+import { ipcArguments } from '@shared/validation'
+import type { IpcMainInvokeEvent } from 'electron'
 
 /** Show a native save dialog and write the supplied contents to disk. */
 async function exportFile(input: ExportFileInput): Promise<ExportFileResult> {
@@ -27,7 +29,7 @@ async function exportFile(input: ExportFileInput): Promise<ExportFileResult> {
  * method names in the IpcApi contract, so the preload bridge stays in lockstep
  * with the renderer's typed surface.
  */
-export function registerIpc(engine: Engine): void {
+export function registerIpc(engine: Engine, isTrusted: (event: IpcMainInvokeEvent) => boolean): void {
   const handlers: Record<IpcApiChannel, (...args: any[]) => unknown> = {
     getSettings: () => engine.getSettings(),
     saveSettings: (settings) => engine.saveSettings(settings),
@@ -62,6 +64,13 @@ export function registerIpc(engine: Engine): void {
   }
 
   for (const [channel, handler] of Object.entries(handlers)) {
-    ipcMain.handle(channel, async (_event, ...args) => handler(...args))
+    ipcMain.handle(channel, async (event, ...args) => {
+      if (!isTrusted(event)) throw new Error('Untrusted IPC sender')
+      const parsed = ipcArguments[channel as IpcApiChannel].safeParse(args)
+      if (!parsed.success) {
+        throw new Error(`Invalid ${channel} request: ${parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('; ')}`)
+      }
+      return handler(...parsed.data)
+    })
   }
 }

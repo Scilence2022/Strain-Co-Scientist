@@ -445,6 +445,8 @@ export interface ExperimentalResult {
   campaignId: string
   designId: string
   createdAt: number
+  /** Last dispute/restore time, used to revisit previously learned evidence. */
+  updatedAt?: number
   outcome: ResultOutcome
   /** Which phenotype was measured (for calibration against the prediction). */
   metric?: QuantPrediction['metric']
@@ -542,7 +544,8 @@ export interface Match {
   createdAt: number
   designAId: string
   designBId: string
-  winnerId: string
+  /** Null for a draw; legacy decisive matches store the winning design id. */
+  winnerId: string | null
   /** Multi-turn debate for top designs, single-turn for lower-ranked. */
   mode: 'debate' | 'single-turn'
   transcript: string

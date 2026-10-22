@@ -113,10 +113,34 @@ When a server is unreachable, the corresponding agent step degrades gracefully
 ```bash
 npm install
 npm run dev          # launch the desktop app (electron-vite dev)
-npm run build        # type-check-clean production build into ./out
+npm run build        # production bundles into ./out
 npm run dist         # package an installer (electron-builder)
-npm run typecheck    # tsc for both node and web projects
+npm run typecheck    # tsc for main, renderer, and tests
+npm test             # offline regression tests (no API key required)
+npm run check        # typecheck + tests + production build
 ```
+
+### Reliability and development checks
+
+Campaigns interrupted by an application restart are restored as **paused**;
+queued and running tasks are marked cancelled. Resume starts a fresh worker only
+after the previous worker has finished. Pause, stop, deletion, and application
+shutdown cancel in-flight LLM requests and wait for workers before completing.
+MCP HTTP requests have a 30-second deadline; LLM requests have a 120-second
+deadline. A failed seed cycle stops with an error instead of spending the rest
+of the campaign budget on repeated empty output.
+
+Writes are serialized and use private temporary files plus atomic rename.
+Failed snapshot writes remain pending for a later retry; settings take effect
+only after they are saved successfully. Input validation and trusted-frame
+checks protect the IPC boundary, and the renderer runs in Electron's sandbox.
+
+The regression suite covers persistence failures, lifecycle races, renderer
+snapshot/event synchronization, invalid model output, tournament draws and
+replay, experimental-result disputes, calibration, and MCP reconfiguration.
+GitHub Actions runs `npm run check` on pushes and pull requests. These checks use
+mock providers and temporary data directories; they do not validate scientific
+claims or replace a live integration test with your configured LLM/MCP servers.
 
 The agents call a live LLM. Open **Settings**, add an Anthropic API key (and,
 optionally, the deep-research / CodeXomics MCP servers for grounding) before

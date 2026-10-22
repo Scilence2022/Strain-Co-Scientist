@@ -42,12 +42,17 @@ const SIDEBAR_MAX = 420
 const SIDEBAR_KEY = 'sidebar-width'
 
 export default function App(): JSX.Element {
-  const { ready, view, init, settings } = useStore()
+  const { ready, view, init, settings, error, clearError, loadingSnapshot, refreshSnapshot } = useStore()
   const { width: sidebarW, startResize, resizing } = useSidebarWidth()
 
   useEffect(() => {
     void init()
     document.body.classList.add(`platform-${navigatorPlatform()}`)
+    const onError = (event: PromiseRejectionEvent) => {
+      useStore.getState().reportError(event.reason)
+    }
+    window.addEventListener('unhandledrejection', onError)
+    return () => window.removeEventListener('unhandledrejection', onError)
   }, [init])
 
   // Apply the selected colour theme to the document root.
@@ -60,7 +65,12 @@ export default function App(): JSX.Element {
     return (
       <div className="app" style={{ gridTemplateColumns: '1fr', gridTemplateAreas: '"main"' }}>
         <div className="empty" style={{ height: '100vh' }}>
-          Loading Strain Co-Scientist…
+          {error ? (
+            <div className="col gap-sm" role="alert">
+              <p>Could not load Strain Co-Scientist: {error}</p>
+              <button className="btn btn-primary" onClick={() => void init()}>Retry</button>
+            </div>
+          ) : 'Loading Strain Co-Scientist…'}
         </div>
       </div>
     )
@@ -70,7 +80,14 @@ export default function App(): JSX.Element {
     <div className="app" style={{ gridTemplateColumns: `${sidebarW}px 1fr` }}>
       <Sidebar />
       <TopBar />
-      <main className="main">{renderView(view)}</main>
+      <main className="main">
+        {error && <div className="card row gap-sm" role="alert">
+          <span>{error}</span>
+          <button className="btn btn-sm" onClick={() => void refreshSnapshot()}>Retry</button>
+          <button className="btn btn-sm btn-ghost" onClick={clearError}>Dismiss</button>
+        </div>}
+        {loadingSnapshot ? <div className="empty" role="status">Loading campaign…</div> : renderView(view)}
+      </main>
       <div
         className={`splitter${resizing ? ' dragging' : ''}`}
         style={{ left: sidebarW }}

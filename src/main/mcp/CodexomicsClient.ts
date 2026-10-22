@@ -33,18 +33,10 @@ export class CodexomicsClient {
     args: Record<string, unknown>
   ): Promise<string | null> {
     if (!this.conn.enabled) return null
-    for (const name of candidates) {
-      if (this.conn.hasTool(name)) {
-        try {
-          return await this.conn.callText(name, args)
-        } catch {
-          return null
-        }
-      }
-    }
-    // If the tool list wasn't populated yet, try the first candidate anyway.
     try {
-      return await this.conn.callText(candidates[0], args)
+      const tools = await this.conn.availableTools()
+      const name = candidates.find((candidate) => tools.includes(candidate))
+      return name ? await this.conn.callText(name, args) : null
     } catch {
       return null
     }
@@ -83,7 +75,7 @@ export class CodexomicsClient {
       return list.map((p: any, i: number) => ({
         label: p.name ?? p.label ?? `Primer ${i + 1} for ${target}`,
         sequence: p.sequence ?? p.seq,
-        detail: p.notes ?? p.tm ? `Tm ${p.tm}` : 'CodeXomics primer'
+        detail: p.notes ?? (p.tm != null ? `Tm ${p.tm}` : 'CodeXomics primer')
       }))
     } catch {
       return [{ label: `Primer design for ${target}`, detail: raw.slice(0, 800) }]

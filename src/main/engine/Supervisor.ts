@@ -48,11 +48,13 @@ export class Supervisor {
   private metaReview: MetaReviewAgent
   private queue: TaskQueue
   private bestEloByCycle: number[] = []
+  private abortController = new AbortController()
 
   constructor(
     private ctx: EngineContext,
     private campaignId: string
   ) {
+    ctx = this.ctx = ctx.forRun(this.abortController.signal)
     this.generation = new GenerationAgent(ctx)
     this.reflection = new ReflectionAgent(ctx)
     this.ranking = new RankingAgent(ctx)
@@ -68,11 +70,13 @@ export class Supervisor {
 
   cancel(): void {
     this.queue.cancel()
+    this.abortController.abort()
   }
 
   // -- Goal parsing ---------------------------------------------------------
 
   async parseGoal(campaign: Campaign): Promise<void> {
+    const goalAtStart = campaign.goal
     this.ctx.log(campaign.id, 'supervisor', 'info', 'Parsing research goal into a plan configuration')
     try {
       const res = await this.ctx.llm.complete({
@@ -83,6 +87,7 @@ export class Supervisor {
         maxTokens: 2000
       })
       const parsed = parseJsonLoose<any>(res.text) ?? {}
+      if (campaign.goal !== goalAtStart) return
       campaign.researchPlan = {
         restatedGoal: String(parsed.restatedGoal ?? campaign.goal),
         focusAreas: Array.isArray(parsed.focusAreas) ? parsed.focusAreas.map(String) : [],
@@ -94,6 +99,8 @@ export class Supervisor {
         parsedAt: Date.now()
       }
     } catch (err) {
+      this.ctx.signal?.throwIfAborted()
+      if (campaign.goal !== goalAtStart) return
       this.ctx.log(
         campaign.id,
         'supervisor',
@@ -110,14 +117,18 @@ export class Supervisor {
     }
     campaign.updatedAt = Date.now()
     this.ctx.store.upsertCampaign(campaign)
+    this.ctx.emit({ kind: 'campaign-upsert', campaignId: campaign.id, campaign })
   }
 
   // -- Main loop ------------------------------------------------------------
 
   async run(): Promise<'completed' | 'paused' | 'stopped'> {
-    this.queue.reset()
     const campaign = this.campaign
     if (!campaign) return 'stopped'
+
+    for (const stats of this.ctx.store.getSnapshot(campaign.id)?.statistics ?? []) {
+      this.bestEloByCycle[stats.cycle] = stats.bestElo
+    }
 
     if (!campaign.researchPlan) await this.parseGoal(campaign)
 
@@ -126,6 +137,9 @@ export class Supervisor {
       const current = this.campaign
       if (!current || current.status === 'stopped') return 'stopped'
       if (current.status === 'paused') return 'paused'
+      this.ctx.signal?.throwIfAborted()
+
+      if (!current.researchPlan) await this.parseGoal(current)
 
       cycle += 1
       const tasks = await this.planCycle(current, cycle)
@@ -143,6 +157,11 @@ export class Supervisor {
       if (after.status === 'paused') {
         this.recordStatistics(after, cycle)
         return 'paused'
+      }
+
+      const cycleTasks = this.ctx.store.getSnapshot(after.id)?.tasks.filter((t) => t.cycle === cycle) ?? []
+      if (cycleTasks.length && cycleTasks.every((t) => t.state === 'failed')) {
+        throw new Error('All tasks in the cycle failed. Check provider settings and the Activity log before resuming.')
       }
 
       this.recordStatistics(after, cycle)
@@ -349,7 +368,7 @@ export class Supervisor {
       cycle,
       run: async () => {
         const review = await this.reflection.review(campaign, design, type, feedback)
-        if (type === 'initial') {
+        if (type === 'initial' && design.status === 'draft') {
           const next: DesignStatus = review.verdict === 'reject' ? 'rejected' : 'active'
           design.status = next
           if (next === 'active' && design.eloHistory.length === 0) {
@@ -369,6 +388,7 @@ export class Supervisor {
     if (active.length < 2) return []
     const pairs: [StrainDesign, StrainDesign, 'debate' | 'single-turn'][] = []
     const used = new Set<string>()
+    const paired = new Set<string>()
     const byElo = [...active].sort((a, b) => b.elo - a.elo)
     const byRecency = [...active].sort((a, b) => b.createdAt - a.createdAt)
 
@@ -376,14 +396,17 @@ export class Supervisor {
     let debates = 0
     for (let i = 0; i + 1 < byElo.length && debates < cfg.topDebates; i += 2) {
       pairs.push([byElo[i], byElo[i + 1], 'debate'])
+      paired.add([byElo[i].id, byElo[i + 1].id].sort().join(':'))
       debates++
     }
     // Newest designs get a proximity-close single-turn match to find their level.
     for (const d of byRecency.slice(0, Math.max(0, cfg.singleTurnMatches))) {
       if (used.has(d.id)) continue
       const partner = this.proximity.closest(this.campaignAt(d.campaignId), d, new Set([d.id, ...used]))
-      if (partner) {
+      const pairKey = partner ? [d.id, partner.id].sort().join(':') : ''
+      if (partner && !paired.has(pairKey)) {
         pairs.push([d, partner, 'single-turn'])
+        paired.add(pairKey)
         used.add(d.id)
         used.add(partner.id)
       }
@@ -412,6 +435,7 @@ export class Supervisor {
       ]
     } else {
       const primers = await this.ctx.codexomics.designPrimers(target)
+      this.ctx.signal?.throwIfAborted()
       if (primers && primers.length) {
         design.constructSuggestions = primers.map((p) => ({
           label: p.label,
@@ -446,7 +470,7 @@ export class Supervisor {
     const latestResultAt = new Map<string, number>()
     for (const r of snap?.results ?? []) {
       if (r.status !== 'recorded') continue
-      latestResultAt.set(r.designId, Math.max(latestResultAt.get(r.designId) ?? 0, r.createdAt))
+      latestResultAt.set(r.designId, Math.max(latestResultAt.get(r.designId) ?? 0, r.updatedAt ?? r.createdAt))
     }
     const latestCalAt = new Map<string, number>()
     for (const rv of snap?.reviews ?? []) {
@@ -579,10 +603,12 @@ export class Supervisor {
       try {
         await this.metaReview.synthesize(campaign, cycle)
       } catch (err) {
+        this.ctx.signal?.throwIfAborted()
         this.ctx.log(campaign.id, 'meta-review', 'warning', `Final meta-review failed: ${String(err)}`)
       }
     }
-    this.recordStatistics(campaign, cycle)
+    const stats = this.ctx.store.getSnapshot(campaign.id)?.statistics ?? []
+    if (stats[stats.length - 1]?.cycle !== cycle) this.recordStatistics(campaign, cycle)
     this.ctx.log(campaign.id, 'supervisor', 'success', `Campaign reached terminal state after ${cycle} cycles`)
   }
 }

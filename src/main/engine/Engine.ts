@@ -30,7 +30,7 @@ import { CodexomicsClient } from '../mcp/CodexomicsClient'
 import { EngineContext } from './context'
 import { Supervisor } from './Supervisor'
 import { MetaReviewAgent, isEmptyOverview } from './agents/MetaReviewAgent'
-import { INITIAL_ELO, updateElo, weightedTotal } from './tournament/Elo'
+import { decideMatch, INITIAL_ELO, updateElo, weightedTotal } from './tournament/Elo'
 
 /**
  * Top-level engine. Owns the context-memory store, settings, the MCP manager,
@@ -42,7 +42,10 @@ export class Engine {
   private mcp: McpManager
   private llm: LLMClient
   private ctx: EngineContext
-  private running = new Map<string, Supervisor>()
+  private running = new Map<string, { supervisor: Supervisor; done: Promise<void> }>()
+  private closing = false
+  private deleting = new Set<string>()
+  private lifecycleVersions = new Map<string, number>()
 
   constructor(
     private emit: (event: EngineEvent) => void,
@@ -135,13 +138,19 @@ export class Engine {
       campaign.title = `${campaign.productTarget} — ${hostDisplayName(campaign.host.preset, campaign.host.customName)}`
     }
     this.store.upsertCampaign(campaign)
+    this.emit({ kind: 'campaign-upsert', campaignId: campaign.id, campaign })
     this.ctx.log(campaign.id, 'system', 'info', 'Campaign created')
     return campaign
   }
 
-  deleteCampaign(id: string): void {
-    this.stopCampaign(id)
-    this.store.deleteCampaign(id)
+  async deleteCampaign(id: string): Promise<void> {
+    this.deleting.add(id)
+    try {
+      await this.stopCampaign(id)
+      await this.store.deleteCampaign(id)
+    } finally {
+      this.deleting.delete(id)
+    }
   }
 
   // -- Lifecycle ------------------------------------------------------------
@@ -152,50 +161,70 @@ export class Engine {
     campaign.status = status
     campaign.updatedAt = Date.now()
     this.store.upsertCampaign(campaign)
-    this.emit({ kind: 'campaign-status', campaignId: id, status })
+    this.emit({ kind: 'campaign-upsert', campaignId: id, campaign })
   }
 
   async startCampaign(id: string): Promise<void> {
-    const campaign = this.store.getCampaign(id)
-    if (!campaign || this.running.has(id)) return
+    if (this.closing) throw new Error('The application is shutting down')
+    if (this.deleting.has(id)) return
+    const version = (this.lifecycleVersions.get(id) ?? 0) + 1
+    this.lifecycleVersions.set(id, version)
+    const previous = this.running.get(id)
+    if (previous) {
+      if (this.store.getCampaign(id)?.status === 'running') return
+      // Pause/stop may still be draining their last task. Resume only after
+      // that worker has left, so immediate clicks neither vanish nor overlap.
+      await previous.done
+    }
+    if (this.closing || this.deleting.has(id) || this.lifecycleVersions.get(id) !== version || !this.store.getCampaign(id) || this.running.has(id)) return
     this.setStatus(id, 'running')
-    void this.launch(id)
+    const supervisor = new Supervisor(this.ctx, id)
+    const done = Promise.resolve().then(() => this.launch(id, supervisor))
+    this.running.set(id, { supervisor, done })
   }
 
   async resumeCampaign(id: string): Promise<void> {
-    const campaign = this.store.getCampaign(id)
-    if (!campaign || this.running.has(id)) return
-    this.setStatus(id, 'running')
-    void this.launch(id)
+    await this.startCampaign(id)
   }
 
   async pauseCampaign(id: string): Promise<void> {
+    this.lifecycleVersions.set(id, (this.lifecycleVersions.get(id) ?? 0) + 1)
     if (!this.running.has(id)) return
     this.setStatus(id, 'paused')
-    this.running.get(id)?.cancel()
+    this.running.get(id)?.supervisor.cancel()
+    await this.running.get(id)?.done
   }
 
   async stopCampaign(id: string): Promise<void> {
+    this.lifecycleVersions.set(id, (this.lifecycleVersions.get(id) ?? 0) + 1)
     const sup = this.running.get(id)
     this.setStatus(id, 'stopped')
-    sup?.cancel()
+    sup?.supervisor.cancel()
+    await sup?.done
   }
 
-  private async launch(id: string): Promise<void> {
+  private async launch(id: string, supervisor: Supervisor): Promise<void> {
     const ctx = this.ctx // capture current context for this run
-    const supervisor = new Supervisor(ctx, id)
-    this.running.set(id, supervisor)
     try {
       const result = await supervisor.run()
-      if (result === 'completed') this.setStatus(id, 'completed')
-      else if (result === 'stopped') this.setStatus(id, 'stopped')
-      // 'paused' status was already set by pauseCampaign.
+      if (this.store.getCampaign(id)?.status === 'running') {
+        if (result === 'completed') this.setStatus(id, 'completed')
+        else if (result === 'stopped') this.setStatus(id, 'stopped')
+      }
     } catch (err) {
-      ctx.log(id, 'system', 'error', `Engine error: ${err instanceof Error ? err.message : String(err)}`)
-      this.setStatus(id, 'error')
+      if (this.store.getCampaign(id)?.status === 'running') {
+        ctx.log(id, 'system', 'error', `Engine error: ${err instanceof Error ? err.message : String(err)}`)
+        this.setStatus(id, 'error')
+      }
     } finally {
-      this.running.delete(id)
-      await this.store.flush()
+      try {
+        await this.store.flush()
+      } catch (err) {
+        ctx.log(id, 'system', 'error', `Could not save campaign: ${String(err)}`)
+        this.setStatus(id, 'error')
+      } finally {
+        this.running.delete(id)
+      }
     }
   }
 
@@ -264,7 +293,7 @@ export class Engine {
       'info',
       'Tournament weights updated — Elo ladder replayed from stored match scores'
     )
-    this.emit({ kind: 'campaign-status', campaignId: id, status: campaign.status })
+    this.emit({ kind: 'campaign-upsert', campaignId: id, campaign })
     await this.store.flush()
     return campaign
   }
@@ -287,24 +316,16 @@ export class Engine {
       const b = byId.get(m.designBId)
       if (!a || !b) continue // a participant was deleted; skip
 
-      let aWon: boolean
       let scoreA: number
       if (m.scoresA && m.scoresB) {
         const tA = weightedTotal(m.scoresA, config.weights)
         const tB = weightedTotal(m.scoresB, config.weights)
         m.weightedTotalA = Math.round(tA * 10) / 10
         m.weightedTotalB = Math.round(tB * 10) / 10
-        if (tA === tB) {
-          aWon = a.elo >= b.elo
-          scoreA = config.tieHandling === 'draw' ? 0.5 : aWon ? 1 : 0
-        } else {
-          aWon = tA > tB
-          scoreA = aWon ? 1 : 0
-        }
+        scoreA = decideMatch(tA, tB, a.elo, b.elo, config.tieHandling)
       } else {
         // Legacy match without sub-scores: preserve the recorded outcome.
-        aWon = m.winnerId === a.id
-        scoreA = aWon ? 1 : 0
+        scoreA = m.winnerId === null ? 0.5 : m.winnerId === a.id ? 1 : 0
       }
 
       const { newA, newB, delta } = updateElo(a.elo, b.elo, scoreA, config.kFactor)
@@ -312,15 +333,16 @@ export class Engine {
       b.elo = newB
       a.eloHistory.push({ cycle: m.cycle, at: m.createdAt, elo: newA })
       b.eloHistory.push({ cycle: m.cycle, at: m.createdAt, elo: newB })
-      if (aWon) {
+      if (scoreA === 1) {
         a.wins += 1
         b.losses += 1
-      } else {
+      } else if (scoreA === 0) {
         b.wins += 1
         a.losses += 1
       }
-      m.winnerId = aWon ? a.id : b.id
+      m.winnerId = scoreA === 0.5 ? null : scoreA === 1 ? a.id : b.id
       m.eloDelta = delta
+      this.emit({ kind: 'match-added', campaignId: id, match: m })
     }
 
     // Persist + push live updates (design-upsert dedupes; matches refresh via snapshot).
@@ -340,7 +362,7 @@ export class Engine {
     campaign.updatedAt = Date.now()
     this.store.upsertCampaign(campaign)
     this.ctx.log(id, 'expert', 'info', 'Scientist refined the research goal')
-    this.emit({ kind: 'campaign-status', campaignId: id, status: campaign.status })
+    this.emit({ kind: 'campaign-upsert', campaignId: id, campaign })
     return campaign
   }
 
@@ -405,6 +427,7 @@ export class Engine {
   flagDesign(designId: string, flagged: boolean): StrainDesign {
     const design = this.findDesign(designId)
     if (!design) throw new Error('design not found')
+    if (design.status === 'rejected' || design.status === 'draft') throw new Error('Only reviewed, active designs can be flagged')
     design.status = flagged ? 'flagged' : 'active'
     this.ctx.upsertDesign(design)
     this.ctx.log(design.campaignId, 'expert', 'info', `${flagged ? 'Flagged' : 'Unflagged'} "${design.title}" for wet-lab`)
@@ -420,7 +443,7 @@ export class Engine {
    * campaign's prediction calibration. If the campaign has already terminated,
    * the result is still recorded and the scientist is prompted to re-open.
    */
-  recordExperimentalResult(input: RecordResultInput): ExperimentalResult {
+  async recordExperimentalResult(input: RecordResultInput): Promise<ExperimentalResult> {
     const campaign = this.store.getCampaign(input.campaignId)
     if (!campaign) throw new Error('campaign not found')
     const design = this.store.getDesign(input.campaignId, input.designId)
@@ -459,15 +482,16 @@ export class Engine {
         'New experimental data recorded on a terminated campaign — re-open it to let the agents act on the results.'
       )
     }
-    void this.store.flush()
+    await this.store.flush()
     return result
   }
 
   /** Mark a result disputed (drops it from the authoritative grade) or restore it. */
-  disputeResult(campaignId: string, resultId: string, disputed: boolean): ExperimentalResult {
+  async disputeResult(campaignId: string, resultId: string, disputed: boolean): Promise<ExperimentalResult> {
     const result = this.store.getResult(campaignId, resultId)
     if (!result) throw new Error('result not found')
     result.status = disputed ? 'disputed' : 'recorded'
+    result.updatedAt = Date.now()
     this.ctx.updateResult(result)
     this.refreshEvidence(campaignId, result.designId)
     this.recomputeCalibration(campaignId)
@@ -478,17 +502,16 @@ export class Engine {
       `${disputed ? 'Disputed' : 'Restored'} an experimental result`,
       { designId: result.designId, resultId }
     )
-    void this.store.flush()
+    await this.store.flush()
     return result
   }
 
   /** Re-open a terminated campaign so the Supervisor runs a results-informed cycle. */
   async reopenCampaign(id: string): Promise<void> {
     const campaign = this.store.getCampaign(id)
-    if (!campaign || this.running.has(id)) return
+    if (!campaign || campaign.status === 'running') return
     this.ctx.log(id, 'supervisor', 'info', 'Campaign re-opened to act on new experimental data')
-    this.setStatus(id, 'running')
-    void this.launch(id)
+    await this.startCampaign(id)
   }
 
   /** Re-derive and cache a design's evidence grade from its results. */
@@ -505,8 +528,11 @@ export class Engine {
     const results = this.store.getResults(campaignId)
     const stats = this.store.getSnapshot(campaignId)?.statistics ?? []
     const cycle = stats.length ? stats[stats.length - 1].cycle : 0
-    const profile = computeCalibration(campaignId, cycle, Date.now(), designs, results)
-    if (profile) this.ctx.addCalibration(profile)
+    const at = Date.now()
+    const profile = computeCalibration(campaignId, cycle, at, designs, results) ?? {
+      campaignId, cycle, at, nPairs: 0, signedBias: 0, meanAbsError: 0, spearman: 0, biasByInterventionType: {}
+    }
+    this.ctx.addCalibration(profile)
   }
 
   private findDesign(designId: string): StrainDesign | undefined {
@@ -518,7 +544,14 @@ export class Engine {
   }
 
   async shutdown(): Promise<void> {
-    for (const sup of this.running.values()) sup.cancel()
+    this.closing = true
+    const runs = [...this.running.entries()]
+    for (const [id, run] of runs) {
+      if (this.store.getCampaign(id)?.status === 'running') this.setStatus(id, 'paused')
+      run.supervisor.cancel()
+    }
+    await Promise.all(runs.map(([, run]) => run.done))
+    await this.mcp.close()
     await this.store.flush()
   }
 }

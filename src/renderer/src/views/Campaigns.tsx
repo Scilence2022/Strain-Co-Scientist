@@ -138,12 +138,14 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
   const [maxCycles, setMaxCycles] = useState(DEFAULT_COMPUTE_BUDGET.maxCycles)
   const [tournamentConfig, setTournamentConfig] = useState<TournamentConfig>(DEFAULT_TOURNAMENT_CONFIG)
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const valid = productTarget.trim() && goal.trim()
 
   const submit = async () => {
     if (!valid) return
     setSubmitting(true)
+    setError(null)
     const input: CreateCampaignInput = {
       title: title.trim(),
       productTarget: productTarget.trim(),
@@ -165,11 +167,17 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
       tournamentConfig,
       computeBudget: { initialGeneration, targetDesigns, maxCycles }
     }
-    const campaign = await window.api.createCampaign(input)
-    await refreshCampaigns()
-    await selectCampaign(campaign.id)
-    setView('dashboard')
-    onClose()
+    try {
+      const campaign = await window.api.createCampaign(input)
+      await refreshCampaigns()
+      await selectCampaign(campaign.id)
+      setView('dashboard')
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   return (
@@ -313,6 +321,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
             <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="auto-generated if blank" />
           </div>
 
+          {error && <div className="card" role="alert">{error}</div>}
           <div className="row" style={{ marginTop: 8 }}>
             <span className="spacer" />
             <button className="btn" onClick={onClose}>

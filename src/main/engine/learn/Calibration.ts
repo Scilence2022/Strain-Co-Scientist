@@ -56,6 +56,8 @@ function buildPairs(designs: StrainDesign[], results: ExperimentalResult[]): Pai
   for (const r of results) {
     if (r.status !== 'recorded') continue
     if (signedMeasured(r) === undefined) continue
+    const prediction = byId.get(r.designId)?.quantPrediction
+    if (r.metric && prediction && r.metric !== prediction.metric) continue
     const prev = latest.get(r.designId)
     if (!prev || r.createdAt >= prev.createdAt) latest.set(r.designId, r)
   }

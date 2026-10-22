@@ -75,6 +75,7 @@ export function TournamentView(): JSX.Element {
           {matches.map((m) => {
             const expanded = open === m.id
             const winnerIsA = m.winnerId === m.designAId
+            const draw = m.winnerId === null
             const hasTotals = typeof m.weightedTotalA === 'number' && typeof m.weightedTotalB === 'number'
             return (
               <div key={m.id} className="card" style={{ padding: 0 }}>
@@ -91,12 +92,13 @@ export function TournamentView(): JSX.Element {
                     </span>
                     {hasTotals && <span className="faint" style={{ fontSize: 'var(--fs-xs)', margin: '0 4px' }}>({m.weightedTotalA})</span>}
                     <span className="faint" style={{ margin: '0 8px' }}>vs</span>
-                    <span style={{ fontWeight: !winnerIsA ? 700 : 400, color: !winnerIsA ? 'var(--text)' : 'var(--text-muted)' }}>
+                    <span style={{ fontWeight: !winnerIsA && !draw ? 700 : 400, color: !winnerIsA && !draw ? 'var(--text)' : 'var(--text-muted)' }}>
                       {designTitle(m.designBId)}
                     </span>
                     {hasTotals && <span className="faint" style={{ fontSize: 'var(--fs-xs)', marginLeft: 4 }}>({m.weightedTotalB})</span>}
                   </div>
                   <span className="spacer" />
+                  {draw && <span className="badge">Draw</span>}
                   <span className="faint" style={{ fontSize: 'var(--fs-xs)' }}>cycle {m.cycle}</span>
                   <span className="badge ok" style={{ marginLeft: 8 }}>Δ{m.eloDelta}</span>
                 </div>
