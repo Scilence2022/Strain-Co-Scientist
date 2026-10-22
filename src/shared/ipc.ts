@@ -169,6 +169,7 @@ export type IpcApiChannel = keyof IpcApi
 
 /** Event channels: main → renderer, push. */
 export type EngineEvent =
+  | { kind: 'campaign-upsert'; campaignId: string; campaign: Campaign }
   | { kind: 'activity'; campaignId: string; event: ActivityEvent }
   | { kind: 'statistics'; campaignId: string; stats: SystemStatistics }
   | { kind: 'design-upsert'; campaignId: string; design: StrainDesign }

@@ -47,6 +47,10 @@ export class LlmRouter implements LLMClient {
   }
 
   private clientFor(provider: LLMProvider): LLMClient {
+    const account = this.settings.llm.providers[provider]
+    const definition = getProvider(provider)
+    if (!account?.enabled) throw new Error(`${definition?.label ?? provider} is disabled. Enable it in Settings.`)
+    if (definition?.requiresApiKey !== false && !account.apiKey.trim()) throw new Error(`Add an API key for ${definition?.label ?? provider} in Settings.`)
     let client = this.cache.get(provider)
     if (!client) {
       client = buildClient(this.settings, provider)

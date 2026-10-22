@@ -30,8 +30,23 @@ export class EngineContext {
     public deepResearch: DeepResearchClient,
     public codexomics: CodexomicsClient,
     public settings: AppSettings,
-    private emitter: (event: EngineEvent) => void
+    private emitter: (event: EngineEvent) => void,
+    public readonly signal?: AbortSignal
   ) {}
+
+  /** Give each campaign its own cancellation scope while sharing services. */
+  forRun(signal: AbortSignal): EngineContext {
+    const llm: LLMClient = {
+      complete: async (req) => {
+        signal.throwIfAborted()
+        const result = await this.llm.complete({ ...req, signal })
+        signal.throwIfAborted()
+        return result
+      },
+      ping: (model) => this.llm.ping(model)
+    }
+    return new EngineContext(this.store, llm, this.deepResearch, this.codexomics, this.settings, this.emitter, signal)
+  }
 
   emit(event: EngineEvent): void {
     this.emitter(event)
@@ -59,22 +74,26 @@ export class EngineContext {
   }
 
   upsertDesign(design: StrainDesign): void {
+    this.signal?.throwIfAborted()
     design.updatedAt = Date.now()
     this.store.upsertDesign(design)
     this.emit({ kind: 'design-upsert', campaignId: design.campaignId, design })
   }
 
   addReview(review: Review): void {
+    this.signal?.throwIfAborted()
     this.store.addReview(review)
     this.emit({ kind: 'review-added', campaignId: review.campaignId, review })
   }
 
   addMatch(match: Match): void {
+    this.signal?.throwIfAborted()
     this.store.addMatch(match)
     this.emit({ kind: 'match-added', campaignId: match.campaignId, match })
   }
 
   addMetaReview(metaReview: MetaReview): void {
+    this.signal?.throwIfAborted()
     this.store.addMetaReview(metaReview)
     this.emit({ kind: 'meta-review', campaignId: metaReview.campaignId, metaReview })
   }

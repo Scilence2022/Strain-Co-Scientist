@@ -79,6 +79,7 @@ export class MetaReviewAgent {
 
   async synthesize(campaign: Campaign, cycle: number): Promise<MetaReview> {
     const meta = await this.generate(campaign, cycle)
+    if (isEmptyOverview(meta)) throw new Error('Meta-review returned no usable research overview')
     this.ctx.addMetaReview(meta)
     this.ctx.log(
       campaign.id,

@@ -85,49 +85,62 @@ export function Settings(): JSX.Element {
   }
 
   const save = async () => {
-    const result = await window.api.saveSettings(draft)
-    setSettings(result)
-    setDraft(structuredClone(result))
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
+    try {
+      const result = await window.api.saveSettings(draft)
+      setSettings(result)
+      setDraft(structuredClone(result))
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+    } catch (err) {
+      useStore.getState().reportError(err)
+    }
   }
 
   const testMcp = async (server: 'deepResearch' | 'codexomics') => {
-    await window.api.saveSettings(draft)
-    setSettings(draft)
     setTests((t) => ({ ...t, [server]: 'loading' }))
-    const res = await window.api.testMcp(server)
-    setTests((t) => ({ ...t, [server]: res }))
+    try {
+      setSettings(await window.api.saveSettings(draft))
+      const res = await window.api.testMcp(server)
+      setTests((t) => ({ ...t, [server]: res }))
+    } catch (err) {
+      setTests((t) => ({ ...t, [server]: { server, ok: false, message: String(err) } }))
+    }
   }
 
   const testLlm = async () => {
-    await window.api.saveSettings(draft)
-    setSettings(draft)
     setLlmTest('loading')
-    const res = await window.api.pingLlm()
-    setLlmTest(res)
+    try {
+      setSettings(await window.api.saveSettings(draft))
+      setLlmTest(await window.api.pingLlm())
+    } catch (err) {
+      setLlmTest({ ok: false, message: String(err) })
+    }
   }
 
   /** Refresh a provider's available models, persisting credentials + result. */
   const refreshModels = async (id: LLMProvider) => {
-    // Persist current edits so the main process tests with fresh credentials.
-    const persisted = await window.api.saveSettings(draft)
-    setSettings(persisted)
     setModelFetch((s) => ({ ...s, [id]: 'loading' }))
-    const res = await window.api.listProviderModels(id)
-    setModelFetch((s) => ({ ...s, [id]: res }))
-    if (res.ok) {
-      const next = structuredClone(draft)
-      const acct = (next.llm.providers[id] ??= { enabled: true, apiKey: '' })
-      acct.fetchedModels = res.models
-      acct.enabled = true
-      // Keep any still-available prior selection; otherwise seed the default
-      // curated subset (latest few presets, capped).
-      const kept = acct.selectedModels?.filter((m) => res.models.includes(m)) ?? []
-      acct.selectedModels = kept.length ? kept : defaultSelectedModels(getProvider(id), res.models)
-      setDraft(next)
-      const saved2 = await window.api.saveSettings(next)
-      setSettings(saved2)
+    try {
+      // Persist current edits so the main process tests with fresh credentials.
+      const persisted = await window.api.saveSettings(draft)
+      setSettings(persisted)
+      const res = await window.api.listProviderModels(id)
+      setModelFetch((s) => ({ ...s, [id]: res }))
+      if (res.ok) {
+        const next = structuredClone(draft)
+        const acct = (next.llm.providers[id] ??= { enabled: true, apiKey: '' })
+        acct.fetchedModels = res.models
+        acct.enabled = true
+        // Keep any still-available prior selection; otherwise seed the default
+        // curated subset (latest few presets, capped).
+        const kept = acct.selectedModels?.filter((m) => res.models.includes(m)) ?? []
+        acct.selectedModels = kept.length ? kept : defaultSelectedModels(getProvider(id), res.models)
+        setDraft(next)
+        const saved2 = await window.api.saveSettings(next)
+        setSettings(saved2)
+      }
+    } catch (err) {
+      setModelFetch((s) => ({ ...s, [id]: { ok: false, models: [], message: String(err) } }))
     }
   }
 

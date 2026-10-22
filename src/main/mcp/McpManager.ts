@@ -12,6 +12,7 @@ export class McpConnection {
   private client: Client | null = null
   private connecting: Promise<Client> | null = null
   private toolNames: string[] = []
+  private revision = 0
 
   constructor(
     public readonly label: string,
@@ -19,7 +20,7 @@ export class McpConnection {
   ) {}
 
   updateConfig(config: McpServerConfig): void {
-    const changed = config.url !== this.config.url || config.accessToken !== this.config.accessToken
+    const changed = config.url !== this.config.url || config.accessToken !== this.config.accessToken || config.enabled !== this.config.enabled
     this.config = config
     if (changed) this.reset()
   }
@@ -28,40 +29,60 @@ export class McpConnection {
     return this.config.enabled && !!this.config.url
   }
 
-  private reset(): void {
-    if (this.client) {
-      this.client.close().catch(() => {})
-    }
+  private reset(): Promise<void> {
+    this.revision++
+    const closing = this.client?.close().catch(() => {}) ?? Promise.resolve()
     this.client = null
     this.connecting = null
     this.toolNames = []
+    return closing
   }
 
   private async getClient(): Promise<Client> {
     if (this.client) return this.client
     if (this.connecting) return this.connecting
-    this.connecting = this.openClient()
+    const revision = this.revision
+    const pending = this.openClient(revision).then(async (client) => {
+      if (revision !== this.revision) {
+        await client.close().catch(() => {})
+        throw new Error(`${this.label} configuration changed while connecting`)
+      }
+      this.client = client
+      return client
+    })
+    this.connecting = pending
     try {
-      this.client = await this.connecting
-      return this.client
+      const client = await pending
+      return client
     } finally {
-      this.connecting = null
+      if (this.connecting === pending) this.connecting = null
     }
   }
 
-  private async openClient(): Promise<Client> {
+  private async openClient(revision: number): Promise<Client> {
     const headers: Record<string, string> = {}
     if (this.config.accessToken) {
       headers['Authorization'] = `Bearer ${this.config.accessToken}`
     }
     const transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
-      requestInit: { headers }
+      requestInit: { headers },
+      fetch: (url, init) => fetch(url, {
+        ...init,
+        signal: init?.signal
+          ? AbortSignal.any([init.signal, AbortSignal.timeout(30_000)])
+          : AbortSignal.timeout(30_000)
+      })
     })
     const client = new Client({ name: 'strain-co-scientist', version: '0.1.0' })
-    await client.connect(transport)
-    const tools = await client.listTools()
-    this.toolNames = tools.tools.map((t) => t.name)
-    return client
+    try {
+      await client.connect(transport)
+      const tools = await client.listTools()
+      if (revision === this.revision) this.toolNames = tools.tools.map((t) => t.name)
+      return client
+    } catch (err) {
+      await client.close().catch(() => {})
+      throw err
+    }
   }
 
   /** Connect (if needed) and report the available tools. */
@@ -87,6 +108,18 @@ export class McpConnection {
 
   hasTool(name: string): boolean {
     return this.toolNames.includes(name)
+  }
+
+  async availableTools(): Promise<string[]> {
+    if (!this.enabled) return []
+    await this.getClient()
+    return [...this.toolNames]
+  }
+
+  async close(): Promise<void> {
+    const pending = this.connecting
+    await this.reset()
+    await pending?.then((opened) => opened.close()).catch(() => {})
   }
 
   /** Call a tool and return the concatenated text content. */
@@ -128,5 +161,9 @@ export class McpManager {
   update(deepResearchCfg: McpServerConfig, codexomicsCfg: McpServerConfig): void {
     this.deepResearch.updateConfig(deepResearchCfg)
     this.codexomics.updateConfig(codexomicsCfg)
+  }
+
+  async close(): Promise<void> {
+    await Promise.all([this.deepResearch.close(), this.codexomics.close()])
   }
 }

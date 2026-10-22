@@ -44,7 +44,7 @@ export class AnthropicClient implements LLMClient {
       ...(req.think ? { thinking: { type: 'adaptive' } } : {})
     }
 
-    const stream = this.client.messages.stream(params)
+    const stream = this.client.messages.stream(params, { signal: req.signal, timeout: 120_000, maxRetries: 1 })
     const message = await stream.finalMessage()
 
     const text = message.content
@@ -68,7 +68,7 @@ export class AnthropicClient implements LLMClient {
       model,
       max_tokens: 16,
       messages: [{ role: 'user', content: 'Reply with the single word: ready' }]
-    })
+    }, { timeout: 30_000, maxRetries: 0 })
     const block = res.content.find((b): b is Anthropic.TextBlock => b.type === 'text')
     return block?.text?.trim() ?? ''
   }

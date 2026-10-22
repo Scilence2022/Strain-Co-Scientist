@@ -25,7 +25,7 @@ export function TopBar(): JSX.Element {
     !!llm &&
     [llm.tiers.highTier, llm.tiers.fastTier].every((ref) => {
       const acct = llm.providers[ref.provider]
-      return !!acct?.apiKey?.trim() || getProvider(ref.provider)?.requiresApiKey === false
+      return !!acct?.enabled && (!!acct.apiKey?.trim() || getProvider(ref.provider)?.requiresApiKey === false)
     })
 
   return (

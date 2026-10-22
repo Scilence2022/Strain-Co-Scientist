@@ -24,6 +24,7 @@ export class ReflectionAgent {
     // Persist review + bump the design's review count.
     this.ctx.addReview(review)
     design.reviewCount += 1
+    if (review.verdict === 'reject') design.status = 'rejected'
     // Reflection can refine the design's novelty estimate.
     if (typeof review.scores.novelty === 'number') design.novelty = review.scores.novelty
     this.ctx.upsertDesign(design)
@@ -85,7 +86,10 @@ export class ReflectionAgent {
       maxTokens: 3000
     })
 
-    const parsed = parseJsonLoose<any>(res.text) ?? {}
+    const parsed = parseJsonLoose<any>(res.text)
+    if (!parsed || !['pass', 'revise', 'reject'].includes(parsed.verdict) || !parsed.scores || typeof parsed.scores !== 'object') {
+      throw new Error(`Review returned no usable verdict and scores (stop reason: ${res.stopReason ?? 'unknown'})`)
+    }
     const scores: Partial<Record<CriterionKey, number>> = {}
     for (const key of CRITERIA_KEYS) {
       if (parsed.scores && parsed.scores[key] != null) scores[key] = clampScore(parsed.scores[key], 5)

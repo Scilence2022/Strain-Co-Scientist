@@ -59,7 +59,10 @@ export class OpenAICompatibleClient implements LLMClient {
     const res = await fetch(`${this.baseUrl}/chat/completions`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: req.signal
+        ? AbortSignal.any([req.signal, AbortSignal.timeout(120_000)])
+        : AbortSignal.timeout(120_000)
     })
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
@@ -68,7 +71,10 @@ export class OpenAICompatibleClient implements LLMClient {
       )
     }
     const json: any = await res.json()
-    const text: string = json.choices?.[0]?.message?.content ?? ''
+    const text = json.choices?.[0]?.message?.content
+    if (typeof text !== 'string' || !text.trim()) {
+      throw new Error('LLM returned no text content')
+    }
     return {
       text,
       model,

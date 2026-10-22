@@ -11,7 +11,7 @@ import { CRITERIA_KEYS, DEFAULT_TOURNAMENT_CONFIG } from '@shared/domain'
 import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { matchPrompt, SYSTEM_PREAMBLE } from '../prompts'
-import { updateElo, weightedTotal } from '../tournament/Elo'
+import { decideMatch, updateElo, weightedTotal } from '../tournament/Elo'
 
 type Scores = Partial<Record<CriterionKey, number>>
 
@@ -36,14 +36,17 @@ export class RankingAgent {
     mode: 'debate' | 'single-turn',
     cycle: number
   ): Promise<Match> {
-    const cfg = campaign.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
+    const judgingConfig = campaign.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
     const resultsA = this.ctx.store.getResultsForDesign(campaign.id, a.id)
     const resultsB = this.ctx.store.getResultsForDesign(campaign.id, b.id)
-    const decision = await this.llmMatch(campaign, a, b, mode, cfg, resultsA, resultsB)
+    const decision = await this.llmMatch(campaign, a, b, mode, judgingConfig, resultsA, resultsB)
+    this.ctx.signal?.throwIfAborted()
+    if (a.status === 'rejected' || b.status === 'rejected') throw new Error('A match participant was rejected during review')
+    const cfg = campaign.tournamentConfig ?? DEFAULT_TOURNAMENT_CONFIG
 
     const totalA = weightedTotal(decision.scoresA, cfg.weights)
     const totalB = weightedTotal(decision.scoresB, cfg.weights)
-    const { aWon, scoreA } = decide(totalA, totalB, a.elo, b.elo, cfg.tieHandling)
+    const scoreA = decideMatch(totalA, totalB, a.elo, b.elo, cfg.tieHandling)
 
     const { newA, newB, delta } = updateElo(a.elo, b.elo, scoreA, cfg.kFactor)
 
@@ -52,10 +55,10 @@ export class RankingAgent {
     const at = Date.now()
     a.eloHistory.push({ cycle, at, elo: newA })
     b.eloHistory.push({ cycle, at, elo: newB })
-    if (aWon) {
+    if (scoreA === 1) {
       a.wins += 1
       b.losses += 1
-    } else {
+    } else if (scoreA === 0) {
       b.wins += 1
       a.losses += 1
     }
@@ -69,7 +72,7 @@ export class RankingAgent {
       createdAt: at,
       designAId: a.id,
       designBId: b.id,
-      winnerId: aWon ? a.id : b.id,
+      winnerId: scoreA === 0.5 ? null : scoreA === 1 ? a.id : b.id,
       mode,
       transcript: decision.transcript,
       rationale: decision.rationale,
@@ -84,7 +87,7 @@ export class RankingAgent {
       campaign.id,
       'ranking',
       'info',
-      `Match: "${a.title}" vs "${b.title}" → ${aWon ? a.title : b.title} (${totalA.toFixed(0)} vs ${totalB.toFixed(0)}, Δ${delta})`,
+      `Match: "${a.title}" vs "${b.title}" → ${scoreA === 0.5 ? 'Draw' : scoreA === 1 ? a.title : b.title} (${totalA.toFixed(0)} vs ${totalB.toFixed(0)}, Δ${delta})`,
       { matchId: match.id }
     )
     return match
@@ -115,7 +118,12 @@ export class RankingAgent {
       think: mode === 'debate',
       maxTokens: 2000
     })
-    const parsed = parseJsonLoose<any>(res.text) ?? {}
+    const parsed = parseJsonLoose<any>(res.text)
+    for (const scores of [parsed?.scoresA, parsed?.scoresB]) {
+      if (!scores || !CRITERIA_KEYS.some((key) => (cfg.weights[key] ?? 0) > 0 && typeof scores[key] === 'number' && Number.isFinite(scores[key]))) {
+        throw new Error(`Judge returned no usable criterion scores (stop reason: ${res.stopReason ?? 'unknown'})`)
+      }
+    }
     const sFirst = cleanScores(parsed.scoresA, cfg.weights)
     const sSecond = cleanScores(parsed.scoresB, cfg.weights)
     return {
@@ -125,22 +133,6 @@ export class RankingAgent {
       rationale: String(parsed.rationale ?? '')
     }
   }
-}
-
-/** Decide the head-to-head outcome from the two weighted totals. */
-function decide(
-  totalA: number,
-  totalB: number,
-  eloA: number,
-  eloB: number,
-  tieHandling: TournamentConfig['tieHandling']
-): { aWon: boolean; scoreA: number } {
-  if (totalA === totalB) {
-    const aWon = eloA >= eloB
-    return { aWon, scoreA: tieHandling === 'draw' ? 0.5 : aWon ? 1 : 0 }
-  }
-  const aWon = totalA > totalB
-  return { aWon, scoreA: aWon ? 1 : 0 }
 }
 
 /**

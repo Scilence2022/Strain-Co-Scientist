@@ -14,6 +14,7 @@ import { app } from 'electron'
 import { promises as fs } from 'node:fs'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import type {
   ActivityEvent,
   AppSettings,
@@ -32,6 +33,7 @@ import type {
   TaskRecord
 } from '@shared/domain'
 import { DEFAULT_SETTINGS, evidenceGradeFor } from '@shared/domain'
+import { settingsSchema } from '@shared/validation'
 
 const MAX_EVENTS = 2000
 
@@ -59,8 +61,9 @@ function emptySnapshot(campaign: Campaign): CampaignSnapshot {
  * the cache was written by an older build.
  */
 function normalizeSnapshot(snap: CampaignSnapshot): CampaignSnapshot {
-  if (!Array.isArray(snap.results)) snap.results = []
-  if (!Array.isArray(snap.calibration)) snap.calibration = []
+  for (const key of ['designs', 'reviews', 'matches', 'metaReviews', 'statistics', 'tasks', 'events', 'results', 'calibration'] as const) {
+    if (!Array.isArray(snap[key])) (snap[key] as unknown[]) = []
+  }
   for (const d of snap.designs) {
     d.evidence = evidenceGradeFor(snap.results.filter((r) => r.designId === d.id))
   }
@@ -74,7 +77,8 @@ export class Store {
   private cache = new Map<string, CampaignSnapshot>()
   private dirty = new Set<string>()
   private flushTimer: NodeJS.Timeout | null = null
-  private settings: AppSettings = DEFAULT_SETTINGS
+  private settings: AppSettings = structuredClone(DEFAULT_SETTINGS)
+  private writes: Promise<unknown> = Promise.resolve()
 
   constructor(rootOverride?: string) {
     this.root = rootOverride ?? join(app.getPath('userData'), 'data')
@@ -87,13 +91,16 @@ export class Store {
   // -- Settings -------------------------------------------------------------
 
   getSettings(): AppSettings {
-    return this.settings
+    return structuredClone(this.settings)
   }
 
   async saveSettings(settings: AppSettings): Promise<AppSettings> {
-    this.settings = settings
-    await this.atomicWrite(this.settingsPath, settings)
-    return settings
+    const copy = structuredClone(settings)
+    return this.enqueue(async () => {
+      await this.atomicWrite(this.settingsPath, copy)
+      this.settings = copy
+      return this.getSettings()
+    })
   }
 
   // -- Loading --------------------------------------------------------------
@@ -103,9 +110,9 @@ export class Store {
       try {
         const raw = JSON.parse(readFileSync(this.settingsPath, 'utf8'))
         // Merge to tolerate older settings files missing new keys.
-        this.settings = mergeSettings(DEFAULT_SETTINGS, raw)
+        this.settings = settingsSchema.parse(mergeSettings(DEFAULT_SETTINGS, raw)) as AppSettings
       } catch {
-        this.settings = DEFAULT_SETTINGS
+        this.settings = structuredClone(DEFAULT_SETTINGS)
       }
     }
     if (!existsSync(this.campaignsDir)) return
@@ -114,9 +121,27 @@ export class Store {
       if (!existsSync(file)) continue
       try {
         const snap = normalizeSnapshot(JSON.parse(readFileSync(file, 'utf8')) as CampaignSnapshot)
+        this.assertId(snap.campaign.id)
+        if (snap.campaign.id !== dir) throw new Error('Campaign directory does not match its id')
+        // Workers cannot survive a process restart. Keep their results, but
+        // expose an honest, resumable state instead of a permanent Running badge.
+        let recovered = false
+        if (snap.campaign.status === 'running') {
+          snap.campaign.status = 'paused'
+          recovered = true
+        }
+        for (const task of snap.tasks) {
+          if (task.state === 'queued' || task.state === 'running') {
+            task.state = 'cancelled'
+            task.finishedAt = Date.now()
+            task.error = 'Interrupted by application shutdown or restart'
+            recovered = true
+          }
+        }
         this.cache.set(snap.campaign.id, snap)
-      } catch {
-        // skip corrupt campaign
+        if (recovered) this.markDirty(snap.campaign.id)
+      } catch (err) {
+        console.error(`Could not load campaign snapshot: ${file}`, err)
       }
     }
   }
@@ -140,6 +165,7 @@ export class Store {
   }
 
   upsertCampaign(campaign: Campaign): Campaign {
+    this.assertId(campaign.id)
     const existing = this.cache.get(campaign.id)
     if (existing) {
       existing.campaign = campaign
@@ -150,13 +176,14 @@ export class Store {
     return campaign
   }
 
-  deleteCampaign(id: string): void {
-    this.cache.delete(id)
-    this.dirty.delete(id)
+  async deleteCampaign(id: string): Promise<void> {
+    this.assertId(id)
     const dir = join(this.campaignsDir, id)
-    if (existsSync(dir)) {
-      fs.rm(dir, { recursive: true, force: true }).catch(() => {})
-    }
+    await this.enqueue(async () => {
+      await fs.rm(dir, { recursive: true, force: true })
+      this.cache.delete(id)
+      this.dirty.delete(id)
+    })
   }
 
   // -- Designs --------------------------------------------------------------
@@ -294,28 +321,52 @@ export class Store {
     if (this.flushTimer) return
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null
-      void this.flush()
+      void this.flush().catch((err) => console.error('Could not persist campaign data; pending changes retained', err))
     }, 400)
   }
 
   async flush(): Promise<void> {
-    const ids = Array.from(this.dirty)
-    this.dirty.clear()
-    await Promise.all(
-      ids.map(async (id) => {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
+    await this.enqueue(async () => {
+      const ids = Array.from(this.dirty)
+      for (const id of ids) {
         const snap = this.cache.get(id)
-        if (!snap) return
-        const dir = join(this.campaignsDir, id)
-        await fs.mkdir(dir, { recursive: true })
-        await this.atomicWrite(join(dir, 'snapshot.json'), snap)
-      })
-    )
+        if (!snap) continue
+        this.dirty.delete(id)
+        try {
+          const dir = join(this.campaignsDir, id)
+          const contents = structuredClone(snap)
+          await fs.mkdir(dir, { recursive: true, mode: 0o700 })
+          await this.atomicWrite(join(dir, 'snapshot.json'), contents)
+        } catch (err) {
+          this.dirty.add(id)
+          throw err
+        }
+      }
+    })
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.writes.then(operation)
+    this.writes = next.catch(() => {})
+    return next
+  }
+
+  private assertId(id: string): void {
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error('Invalid campaign id')
   }
 
   private async atomicWrite(path: string, value: unknown): Promise<void> {
-    const tmp = `${path}.${process.pid}.tmp`
-    await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8')
-    await fs.rename(tmp, path)
+    const tmp = `${path}.${randomUUID()}.tmp`
+    try {
+      await fs.writeFile(tmp, JSON.stringify(value, null, 2), { encoding: 'utf8', mode: 0o600 })
+      await fs.rename(tmp, path)
+    } finally {
+      await fs.rm(tmp, { force: true }).catch(() => {})
+    }
   }
 }
 

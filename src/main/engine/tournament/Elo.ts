@@ -1,4 +1,4 @@
-import type { CriteriaWeights, CriterionKey } from '@shared/domain'
+import type { CriteriaWeights, CriterionKey, TournamentConfig } from '@shared/domain'
 import { CRITERIA_KEYS } from '@shared/domain'
 
 /**
@@ -8,6 +8,13 @@ import { CRITERIA_KEYS } from '@shared/domain'
 export const INITIAL_ELO = 1200
 
 export const DEFAULT_K_FACTOR = 32
+
+/** Shared by live judging and deterministic replay. */
+export function decideMatch(totalA: number, totalB: number, eloA: number, eloB: number, tieHandling: TournamentConfig['tieHandling']): 0 | 0.5 | 1 {
+  if (totalA === totalB && tieHandling === 'draw') return 0.5
+  if (totalA === totalB) return eloA >= eloB ? 1 : 0
+  return totalA > totalB ? 1 : 0
+}
 
 export function expectedScore(ratingA: number, ratingB: number): number {
   return 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400))
