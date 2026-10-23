@@ -8,6 +8,7 @@ import type { EngineEvent, PreloadBridge } from '@shared/ipc'
 
 export type ViewKey =
   | 'dashboard'
+  | 'monitor'
   | 'campaigns'
   | 'designs'
   | 'tournament'
@@ -56,7 +57,7 @@ export function createAppStore(bridge: () => PreloadBridge) {
     const loadSnapshot = async (id: string | null, clear: boolean): Promise<void> => {
       const version = ++requestVersion
       pending = id ? { id, events: [] } : null
-      set({ selectedId: id, loadingSnapshot: !!id, error: null, ...(clear ? { snapshot: null, selectedDesignId: null } : {}) })
+      set({ selectedId: id, loadingSnapshot: !!id && (clear || !get().snapshot), error: null, ...(clear ? { snapshot: null, selectedDesignId: null } : {}) })
       if (!id) {
         set({ snapshot: null })
         return

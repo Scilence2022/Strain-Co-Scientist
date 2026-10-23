@@ -29,15 +29,15 @@ export function DesignStatusBadge({ status }: { status: DesignStatus }): JSX.Ele
     reviewing: { cls: 'blue', label: 'Reviewing', hint: 'Under review.' },
     active: {
       cls: 'accent',
-      label: 'In tournament',
-      hint: 'Passed the safety/feasibility gate. Competing on Elo — a low Elo means lower-ranked, not eliminated.'
+      label: 'Candidate',
+      hint: 'Available for comparison after proposal review or expert contribution. Review the evidence before experimental planning.'
     },
     rejected: {
       cls: 'err',
       label: 'Rejected',
       hint: 'Failed the initial safety/feasibility review — never entered the tournament. This is independent of Elo (rejected designs keep the default 1200 because they play no matches).'
     },
-    flagged: { cls: 'warn', label: 'Flagged', hint: 'Flagged for the wet lab.' }
+    flagged: { cls: 'warn', label: 'Shortlisted', hint: 'Selected by a scientist for experimental planning.' }
   }
   const m = map[status]
   return (

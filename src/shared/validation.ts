@@ -48,6 +48,13 @@ export const settingsSchema = z.object({
   ui: z.object({ theme: z.enum(['dark', 'light']) })
 })
 
+export const labContextSchema = z.object({
+  metric: z.enum(['titer', 'rate', 'yield', 'tolerance', 'other']),
+  baselineValue: finite.optional(), targetValue: finite.optional(), unit: text.optional(),
+  baselineStrain: text.optional(), carbonSource: text.optional(), cultureMode: text.optional(),
+  medium: text.optional(), conditions: text.optional(), assay: text.optional(), bottlenecks: text.optional()
+})
+
 export const campaignInputSchema = z.object({
   title: text.trim(), productTarget: required, goal: required,
   host: z.object({ preset: z.enum(['ecoli', 'scerevisiae', 'cglutamicum', 'bsubtilis', 'pputida', 'ppastoris', 'custom', 'agnostic']), customName: text.optional(), strainBackground: text.optional(), notes: text.optional() })
@@ -55,6 +62,7 @@ export const campaignInputSchema = z.object({
   objective: z.enum(Object.keys(OBJECTIVE_LABELS) as [string, ...string[]]),
   constraints: z.object({ availableTools: strings, forbiddenInterventions: strings, biosafety: z.enum(['BSL-1', 'BSL-2', 'unspecified']), regulatoryNotes: text.optional(), onlyNovel: z.boolean() }),
   preferences: text,
+  labContext: labContextSchema.optional(),
   tournamentConfig: tournamentConfigSchema,
   computeBudget: z.object({ initialGeneration: integer(1, 20), targetDesigns: integer(1, 120), maxCycles: integer(1, 120) })
     .refine((budget) => budget.initialGeneration <= budget.targetDesigns, 'Initial generation cannot exceed target designs')
@@ -65,7 +73,8 @@ const result = z.object({
   outcome: z.enum(Object.keys(RESULT_OUTCOME_LABELS) as [string, ...string[]]),
   metric: z.enum(['titer', 'rate', 'yield', 'tolerance', 'other']).optional(),
   measuredValue: finite.optional(), baselineValue: finite.optional(),
-  unit: text.optional(), replicates: integer(1, 1_000_000).optional(), observations: required, author: text.optional()
+  unit: text.optional(), replicates: integer(1, 1_000_000).optional(), observations: required, author: text.optional(),
+  runLabel: text.optional(), strainLabel: text.optional(), conditions: text.optional()
 })
 
 /** Validate every renderer request at the privileged-process boundary. */
@@ -75,6 +84,7 @@ export const ipcArguments: Record<IpcApiChannel, z.ZodTypeAny> = {
   listCampaigns: z.tuple([]), createCampaign: z.tuple([campaignInputSchema]), deleteCampaign: z.tuple([id]), getSnapshot: z.tuple([id]),
   updateTournamentConfig: z.tuple([id, tournamentConfigSchema]),
   startCampaign: z.tuple([id]), pauseCampaign: z.tuple([id]), resumeCampaign: z.tuple([id]), stopCampaign: z.tuple([id]), reopenCampaign: z.tuple([id]),
+  updateLabContext: z.tuple([id, labContextSchema]),
   regenerateOverview: z.tuple([id]), refineGoal: z.tuple([id, required]), flagDesign: z.tuple([id, z.boolean()]),
   submitExpertDesign: z.tuple([z.object({ campaignId: id, title: required, summary: required, chassis: text, mechanism: text, predictedEffect: text,
     interventions: z.array(z.object({ type: z.enum(Object.keys(INTERVENTION_LABELS) as [string, ...string[]]), targets: strings, details: text })).max(1000) })]),

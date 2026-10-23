@@ -6,6 +6,7 @@
  */
 import type {
   AppSettings,
+  LabContext,
   Campaign,
   CampaignSnapshot,
   Review,
@@ -62,6 +63,9 @@ export interface RecordResultInput {
   observations: string
   /** Defaults to "Scientist" when omitted. */
   author?: string
+  runLabel?: string
+  strainLabel?: string
+  conditions?: string
 }
 
 export interface McpTool {
@@ -151,6 +155,7 @@ export interface IpcApi {
   stopCampaign(campaignId: string): Promise<void>
 
   // Expert-in-the-loop
+  updateLabContext(campaignId: string, context: LabContext): Promise<Campaign>
   refineGoal(campaignId: string, addendum: string): Promise<Campaign>
   submitExpertDesign(input: ExpertDesignInput): Promise<StrainDesign>
   submitExpertReview(input: ExpertReviewInput): Promise<Review>

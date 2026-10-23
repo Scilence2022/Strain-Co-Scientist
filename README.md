@@ -8,7 +8,7 @@ of specialized agents then generates, peer-reviews, debates, ranks, evolves, and
 synthesizes concrete strain-design strategies — with a clean, professional
 monitoring & management UI.
 
-![Strain Co-Scientist — Dashboard](docs/screenshots/01_dashboard.png)
+![Strain Co-Scientist — Research monitor (advanced view)](docs/screenshots/01_dashboard.png)
 
 ---
 
@@ -150,145 +150,107 @@ running a campaign.
 
 ## Using Strain Co-Scientist
 
-### Step 1 — Configure
+The default workspace follows a wet-lab decision process: **define the problem →
+compare strategies → choose a small experimental batch → record results → refine**.
+Engine telemetry remains available under **Research details**.
 
-Open **Settings** before running anything.
+### 1. Define a research project
 
-**Providers** — enable at least one LLM provider and paste your API key.
-Anthropic (Claude) and DeepSeek are both supported out of the box; an
-OpenAI-compatible shim handles any other provider.
+Open **Research projects → New project**. The three-step brief asks for:
 
-![Settings — Providers](docs/screenshots/12_settings_providers.png)
+1. **Goal & strain** — product or phenotype, host, strain background, primary
+   improvement and a natural-language production problem.
+2. **Experimental reference** — measurement, baseline and success target in a
+   shared unit, reference strain, carbon source, culture format, medium,
+   conditions, available assays and previous attempts. Unknown values can remain
+   blank; the system does not invent a measured baseline.
+3. **Lab constraints** — available engineering tools, excluded interventions,
+   screening/build constraints and practical preferences. Choose focused,
+   balanced or extended research; detailed budgets and comparison weights are
+   under advanced settings.
 
-**Model Selection** — choose the high-tier model (Generation / Reflection /
-Meta-review) and the fast-tier model (Ranking / Proximity / Evolution). The
-defaults (`claude-opus-4-8` / `claude-sonnet-4-6`) give the best results;
-per-agent overrides are available for cost control.
+Saving a brief does not start model calls. From **Research workbench**, use
+**Edit** beside the experimental reference to add or revise structured context,
+including on older projects. Pause running research before editing it. Changes
+apply to future research; old design predictions and recorded batch values keep
+their original context.
 
-![Settings — Model Selection](docs/screenshots/13_settings_models.png)
+### 2. Configure research and evidence sources
 
-**MCP Servers** *(optional)* — connect the **Deep Research** server for
-literature grounding and **CodeXomics** for genomic data, BLAST, and construct
-design. Both degrade gracefully when unreachable.
+Use **Set up research** or **Settings** to configure a provider and its models.
+Optionally enable the literature and CodeXomics connections. Then use **Start
+research**. The workbench surfaces a suggested next step, candidate strategies,
+experimental reference and lab evidence; it does not use Elo as the headline
+measure of biological success.
 
-![Settings — MCP Servers](docs/screenshots/14_settings_mcp.png)
+### 3. Compare and shortlist strategies
 
----
+**Design strategies** searches titles, genes, intervention details and mechanisms.
+Filter candidate strategies, the lab shortlist, all proposals or rejected designs,
+and distinguish predicted-only proposals from designs with measured evidence.
+Select two or three designs for a side-by-side comparison of proposed changes,
+mechanism, predicted effect, reference context, evidence, risks, gaps and first
+proposed test. Selection is preserved when background data refreshes.
 
-### Step 2 — Create a campaign
+**Shortlist for lab** selects eligible candidates (reviewed proposals or expert
+contributions) for experimental planning.
+Draft, reviewing and rejected proposals cannot bypass review by being
+shortlisted. A shortlist is a scientist's planning decision, not protocol approval.
 
-Go to **Campaigns → + New campaign**. Set:
-- **Product** — the target molecule (e.g. *lysine*, *mevalonate*)
-- **Host** — the production organism (e.g. *E. coli*, *C. glutamicum*)
-- **Objective** — what to optimise (titer / rate / yield)
-- **Constraints** — budget, safety level, forbidden interventions
-- **Compute budget** — number of agent cycles (more cycles = deeper search)
+Open a design from the workbench, strategies, experiment queue, roadmap or map:
 
-Hit **Run**. The campaign is saved locally and survives restarts.
+- **Strategy & mechanism** — proposed changes, rationale, predicted effect,
+  tradeoffs and missing evidence. AI comparison metrics and lineage are secondary.
+- **Evidence & reviews** — active and excluded results, conflicting conclusions,
+  supplied references with relevance notes, review narratives and evidence.
+- **Plan & record results** — proposed DBTL steps, construct suggestions and
+  direct result entry. Model-generated sequences are labelled as suggestions.
 
-![Campaigns — campaign list](docs/screenshots/02_campaigns.png)
+A citation is a reference to inspect, not proof of validation. Elo is an AI
+comparison score, not a success probability. Evidence labels summarize recorded
+conclusions; inspect controls, replicates and culture conditions before drawing
+scientific conclusions.
 
----
+### 4. Plan a batch and record results
 
-### Step 3 — Monitor progress
+**Experiments & results** starts with the lab shortlist and highlights candidates
+awaiting an active result. Choose **Record result** on a candidate, or select any
+tested design in the recording form, including unsuccessful experiments.
 
-The **Dashboard** shows the full system state in real time: the Elo-over-compute
-chart (test-time scaling), strategy effectiveness (Generation vs. Evolution
-win-rates), agent utilisation across the worker queue, designs-by-status
-breakdown, and the DBTL evidence standing (confirmed / partial / refuted counts).
+There is no preselected successful outcome. The scientist explicitly records
+confirmed, partial, refuted, inconclusive or build-failed. Add the experiment /
+batch ID, tested strain ID, measured engineered and control values in a shared
+unit, biological replicate count, actual conditions and observations. A paired
+control value is entered explicitly rather than copied from the project's
+historical baseline. Qualitative observations may omit both numerical values.
+Failed saves preserve the form for retry.
 
-![Dashboard](docs/screenshots/01_dashboard.png)
+Observed percentage changes are signed, without assuming an increase is always
+desirable. A zero baseline is retained but has no relative percentage. Conflicting
+active conclusions are highlighted. **Exclude from evidence** disputes a result;
+restore it when resolved. Excluded records remain visible and in exports.
 
-The **Activity log** streams every structured agent event — filter by agent role
-or severity to track what the system is doing at any moment.
+Evidence ranking and calibration update on save. Resume research, or re-open a
+finished project from the experiments view, to incorporate the observations into
+new proposals. The calibration charts live under a collapsed advanced section;
+explicitly different phenotype measurements are excluded from the comparison.
 
-![Activity log](docs/screenshots/11_activity_log.png)
+### 5. Take the plan to the bench
 
----
+Export a **Markdown experiment brief** for the shortlist, a single design or a
+comparison. It includes the research reference, constraints, proposed changes,
+mechanism, predictions, DBTL plan, evidence gaps, reviews, result history and
+supplied reference notes. Missing information is labelled rather than filled in
+with a generated protocol.
 
-### Step 4 — Explore the design space
+Export **CSV result records** from Experiments & results for lab notebooks and
+further analysis. Exports preserve batch/strain identity, measurement/control
+values, units, replicates, actual conditions, observations and evidence status.
 
-**Designs** lists every generated strategy in evidence-then-Elo order: a design
-confirmed in the lab always ranks above the predicted-only frontier regardless of
-Elo. The "Confirmed in lab" badge marks lab-verified winners.
-
-![Designs — ranked table](docs/screenshots/03_designs.png)
-
-Click any row to open the **design drawer**, which shows the full intervention
-list, mechanistic rationale, DBTL experimental plan, construct and primer
-suggestions, risk assessment, all agent reviews, and an Elo sparkline.
-
-![Design drawer — interventions and rationale](docs/screenshots/07_design_drawer.png)
-
-**Tournament** shows every Elo match as a side-by-side scientific debate. Expand
-any match to read the full transcript and scoring rationale.
-
-![Tournament — match history](docs/screenshots/04_tournament.png)
-
-**Proximity map** renders the explored design space as a d3-force cluster
-graph. Node size = Elo; colour = cluster. Click any node to inspect the design.
-
-![Proximity map](docs/screenshots/05_proximity_map.png)
-
-**Research overview** is the Meta-review agent's synthesis: an engineering
-roadmap, recurring critique patterns, and suggested collaborators — updated each
-cycle.
-
-![Research overview](docs/screenshots/06_research_overview.png)
-
----
-
-### Step 5 — Record wet-lab results (DBTL Learn)
-
-Scroll to the bottom of the design drawer and fill in **Record a result**:
-choose the outcome (confirmed / partial / refuted), enter the measured value and
-baseline, and add observations. Submit, and the result flows back through the
-full engine immediately.
-
-![Design drawer — wet-lab result form](docs/screenshots/08_design_drawer_results.png)
-
-The **Experiments** view shows every recorded result alongside the predicted
-value, a calibration scatter plot, and a signed-bias trend. The prediction
-calibration panel on the Dashboard is also updated each cycle so agents learn to
-predict better over time.
-
-![Experiments — calibration view](docs/screenshots/09_experiments.png)
-
----
-
-### Step 6 — Expert-in-the-loop controls
-
-The **Expert-in-the-loop** surface gives you direct editorial control without
-touching settings:
-
-- **Refine goal** — amend the campaign objective mid-run
-- **Contribute a design** — inject your own hypothesis as a first-class design
-  that enters the tournament
-- **Write a review** — add a manual expert review to any design
-- **Flag for wet lab** — surface a design for prioritised experimental testing
-- **Re-open a campaign** — restart a terminated campaign after recording new lab
-  results, so the system reasons over fresh evidence
-
-![Expert-in-the-loop](docs/screenshots/10_expert_in_the_loop.png)
-
----
-
-## The UI
-
-A left-nav workstation shell with ten views:
-
-| View | Purpose |
-| --- | --- |
-| **Dashboard** | Live system state: Elo-over-compute chart, prediction-calibration panel, design counts, agent utilization, strategy win-rates, worker queue, activity feed. |
-| **Campaigns** | Create/configure campaigns (product, host, objective, constraints, compute budget) and control runs. |
-| **Designs** | Evidence-then-Elo ranked, filterable table + detail drawer (interventions, mechanism, DBTL plan, constructs, reviews, wet-lab results, Elo sparkline, lineage). |
-| **Tournament** | Match history with expandable scientific-debate transcripts. |
-| **Proximity map** | d3-force cluster map of the explored design space. |
-| **Research overview** | Meta-review roadmap, recurring critique patterns, suggested collaborators. |
-| **Experiments** | Record/ dispute wet-lab results, predicted-vs-measured calibration scatter, signed-bias trend, per-intervention-class bias. |
-| **Expert-in-the-loop** | Refine the goal, contribute your own design, write reviews, flag designs for the wet lab, record experimental results, re-open campaigns. |
-| **Activity log** | Filterable structured event log. |
-| **Settings** | LLM provider/models, MCP servers, engine, and safety configuration. |
+Use **Scientist input** to refine the goal, contribute a design or provide an
+expert review. The **Engineering roadmap** synthesizes the research; **Research
+monitor**, **AI comparisons**, **Strategy map** and **Activity log** expose the
+underlying computational details when needed.
 
 ## Repository layout
 

@@ -204,6 +204,9 @@ export interface Campaign {
   /** Full natural-language goal (may be long; mirrors the paper's free-form goal). */
   goal: string
 
+  /** Scientist-supplied reference conditions; optional for existing campaigns. */
+  labContext?: LabContext
+
   /** Constraints the agents must honour. */
   constraints: {
     availableTools: string[] // e.g. ["CRISPR-Cas9", "lambda-Red", "plasmid overexpression"]
@@ -219,6 +222,20 @@ export interface Campaign {
 
   /** Derived by the Supervisor at parse time (research-plan configuration). */
   researchPlan?: ResearchPlanConfig
+}
+
+export interface LabContext {
+  metric: QuantPrediction['metric']
+  baselineValue?: number
+  targetValue?: number
+  unit?: string
+  baselineStrain?: string
+  carbonSource?: string
+  cultureMode?: string
+  medium?: string
+  conditions?: string
+  assay?: string
+  bottlenecks?: string
 }
 
 /**
@@ -460,6 +477,10 @@ export interface ExperimentalResult {
   observations: string
   /** Who reported it + provenance (lab, dataset, paper). */
   author: string
+  /** Traceability and comparability of the measured batch. */
+  runLabel?: string
+  strainLabel?: string
+  conditions?: string
   /**
    * An expert can dispute a result; `disputed`/`superseded` results drop out of
    * the authoritative evidence grade and calibration until resolved.

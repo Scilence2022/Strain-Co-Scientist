@@ -9,14 +9,14 @@ import {
   IconLog,
   IconOverview,
   IconBeaker,
-  IconSettings,
   IconTournament
 } from './components/Icons'
 import { Sidebar } from './views/Sidebar'
 import { TopBar } from './views/TopBar'
 import { Dashboard } from './views/Dashboard'
 import { Campaigns } from './views/Campaigns'
-import { DesignsExplorer } from './views/DesignsExplorer'
+import { Workbench } from './views/Workbench'
+import { DesignsExplorer, DesignDrawer } from './views/DesignsExplorer'
 import { TournamentView } from './views/TournamentView'
 import { ProximityView } from './views/ProximityView'
 import { ResearchOverview } from './views/ResearchOverview'
@@ -25,16 +25,27 @@ import { ExpertView } from './views/ExpertView'
 import { ActivityLog } from './views/ActivityLog'
 import { Settings } from './views/Settings'
 
-export const NAV: { key: ViewKey; label: string; icon: (p: { size?: number }) => JSX.Element }[] = [
-  { key: 'dashboard', label: 'Dashboard', icon: IconDashboard },
-  { key: 'campaigns', label: 'Campaigns', icon: IconCampaigns },
-  { key: 'designs', label: 'Designs', icon: IconBeaker },
-  { key: 'tournament', label: 'Tournament', icon: IconTournament },
-  { key: 'proximity', label: 'Proximity map', icon: IconGraph },
-  { key: 'overview', label: 'Research overview', icon: IconOverview },
-  { key: 'experiments', label: 'Experiments', icon: IconExperiment },
-  { key: 'expert', label: 'Expert-in-the-loop', icon: IconExpert },
-  { key: 'log', label: 'Activity log', icon: IconLog }
+export const NAV: {
+  key: ViewKey
+  label: string
+  group: string
+  icon: (p: { size?: number }) => JSX.Element
+}[] = [
+  { key: 'dashboard', label: 'Research workbench', group: 'Lab workflow', icon: IconDashboard },
+  { key: 'campaigns', label: 'Research projects', group: 'Lab workflow', icon: IconCampaigns },
+  { key: 'designs', label: 'Design strategies', group: 'Lab workflow', icon: IconBeaker },
+  {
+    key: 'experiments',
+    label: 'Experiments & results',
+    group: 'Lab workflow',
+    icon: IconExperiment
+  },
+  { key: 'overview', label: 'Engineering roadmap', group: 'Lab workflow', icon: IconOverview },
+  { key: 'expert', label: 'Scientist input', group: 'Lab workflow', icon: IconExpert },
+  { key: 'monitor', label: 'Research monitor', group: 'Research details', icon: IconDashboard },
+  { key: 'tournament', label: 'AI comparisons', group: 'Research details', icon: IconTournament },
+  { key: 'proximity', label: 'Strategy map', group: 'Research details', icon: IconGraph },
+  { key: 'log', label: 'Activity log', group: 'Research details', icon: IconLog }
 ]
 
 const SIDEBAR_MIN = 180
@@ -42,7 +53,20 @@ const SIDEBAR_MAX = 420
 const SIDEBAR_KEY = 'sidebar-width'
 
 export default function App(): JSX.Element {
-  const { ready, view, init, settings, error, clearError, loadingSnapshot, refreshSnapshot } = useStore()
+  const {
+    ready,
+    view,
+    init,
+    settings,
+    error,
+    clearError,
+    loadingSnapshot,
+    refreshSnapshot,
+    snapshot,
+    selectedId,
+    selectedDesignId,
+    openDesign
+  } = useStore()
   const { width: sidebarW, startResize, resizing } = useSidebarWidth()
 
   useEffect(() => {
@@ -68,26 +92,47 @@ export default function App(): JSX.Element {
           {error ? (
             <div className="col gap-sm" role="alert">
               <p>Could not load Strain Co-Scientist: {error}</p>
-              <button className="btn btn-primary" onClick={() => void init()}>Retry</button>
+              <button className="btn btn-primary" onClick={() => void init()}>
+                Retry
+              </button>
             </div>
-          ) : 'Loading Strain Co-Scientist…'}
+          ) : (
+            'Loading Strain Co-Scientist…'
+          )}
         </div>
       </div>
     )
   }
+
+  const selected = snapshot?.designs.find((d) => d.id === selectedDesignId)
 
   return (
     <div className="app" style={{ gridTemplateColumns: `${sidebarW}px 1fr` }}>
       <Sidebar />
       <TopBar />
       <main className="main">
-        {error && <div className="card row gap-sm" role="alert">
-          <span>{error}</span>
-          <button className="btn btn-sm" onClick={() => void refreshSnapshot()}>Retry</button>
-          <button className="btn btn-sm btn-ghost" onClick={clearError}>Dismiss</button>
-        </div>}
-        {loadingSnapshot ? <div className="empty" role="status">Loading campaign…</div> : renderView(view)}
+        {error && (
+          <div className="card row gap-sm" role="alert">
+            <span>{error}</span>
+            <button className="btn btn-sm" onClick={() => void refreshSnapshot()}>
+              Retry
+            </button>
+            <button className="btn btn-sm btn-ghost" onClick={clearError}>
+              Dismiss
+            </button>
+          </div>
+        )}
+        {loadingSnapshot ? (
+          <div className="empty" role="status">
+            Loading project…
+          </div>
+        ) : (
+          <div key={selectedId}>{renderView(view)}</div>
+        )}
       </main>
+      {selected && !loadingSnapshot && (
+        <DesignDrawer key={selected.id} design={selected} onClose={() => openDesign(null)} />
+      )}
       <div
         className={`splitter${resizing ? ' dragging' : ''}`}
         style={{ left: sidebarW }}
@@ -150,6 +195,8 @@ function useSidebarWidth(): {
 function renderView(view: ViewKey): JSX.Element {
   switch (view) {
     case 'dashboard':
+      return <Workbench />
+    case 'monitor':
       return <Dashboard />
     case 'campaigns':
       return <Campaigns />

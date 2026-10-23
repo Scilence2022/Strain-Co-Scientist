@@ -27,6 +27,7 @@ const api: PreloadBridge = {
   resumeCampaign: (id) => ipcRenderer.invoke('resumeCampaign', id),
   stopCampaign: (id) => ipcRenderer.invoke('stopCampaign', id),
 
+  updateLabContext: (id, context) => ipcRenderer.invoke('updateLabContext', id, context),
   refineGoal: (id, addendum) => ipcRenderer.invoke('refineGoal', id, addendum),
   submitExpertDesign: (input) => ipcRenderer.invoke('submitExpertDesign', input),
   submitExpertReview: (input) => ipcRenderer.invoke('submitExpertReview', input),

@@ -6,6 +6,7 @@ import type {
   CampaignStatus,
   ExperimentalResult,
   LLMProvider,
+  LabContext,
   Review,
   StrainDesign
 } from '@shared/domain'
@@ -354,6 +355,20 @@ export class Engine {
 
   // -- Expert-in-the-loop ---------------------------------------------------
 
+  async updateLabContext(id: string, context: LabContext): Promise<Campaign> {
+    const campaign = this.store.getCampaign(id)
+    if (!campaign) throw new Error('campaign not found')
+    if (campaign.status === 'running') throw new Error('Pause research before changing the experimental reference')
+    campaign.labContext = structuredClone(context)
+    campaign.researchPlan = undefined
+    campaign.updatedAt = Date.now()
+    this.store.upsertCampaign(campaign)
+    await this.store.flush()
+    this.emit({ kind: 'campaign-upsert', campaignId: id, campaign })
+    this.ctx.log(id, 'expert', 'info', 'Scientist updated the experimental reference for future research')
+    return campaign
+  }
+
   refineGoal(id: string, addendum: string): Campaign {
     const campaign = this.store.getCampaign(id)
     if (!campaign) throw new Error('campaign not found')
@@ -427,7 +442,7 @@ export class Engine {
   flagDesign(designId: string, flagged: boolean): StrainDesign {
     const design = this.findDesign(designId)
     if (!design) throw new Error('design not found')
-    if (design.status === 'rejected' || design.status === 'draft') throw new Error('Only reviewed, active designs can be flagged')
+    if (design.status !== 'active' && design.status !== 'flagged') throw new Error('Only reviewed, active designs can be flagged')
     design.status = flagged ? 'flagged' : 'active'
     this.ctx.upsertDesign(design)
     this.ctx.log(design.campaignId, 'expert', 'info', `${flagged ? 'Flagged' : 'Unflagged'} "${design.title}" for wet-lab`)
@@ -462,6 +477,9 @@ export class Engine {
       replicates: input.replicates,
       observations: input.observations,
       author: input.author?.trim() || 'Scientist',
+      runLabel: input.runLabel,
+      strainLabel: input.strainLabel,
+      conditions: input.conditions,
       status: 'recorded'
     }
     this.ctx.addResult(result)

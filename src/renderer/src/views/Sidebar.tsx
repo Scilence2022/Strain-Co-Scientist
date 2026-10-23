@@ -24,36 +24,53 @@ export function Sidebar(): JSX.Element {
         <div className="brand-sub">Rational strain engineering</div>
       </div>
       <nav className="nav">
-        <div className="nav-section">Workspace</div>
-        {NAV.map((item) => {
+        {NAV.map((item, index) => {
           const Icon = item.icon
           const count = counts[item.key]
           return (
-            <div
-              key={item.key}
-              className={`nav-item ${view === item.key ? 'active' : ''}`}
-              onClick={() => {
-                openDesign(null)
-                setView(item.key)
-              }}
-            >
-              <Icon size={16} />
-              <span>{item.label}</span>
-              {typeof count === 'number' && count > 0 && <span className="nav-count">{count}</span>}
+            <div key={item.key}>
+              {(index === 0 || NAV[index - 1].group !== item.group) && (
+                <div className="nav-section">{item.group}</div>
+              )}
+              <button
+                type="button"
+                aria-current={view === item.key ? 'page' : undefined}
+                className={`nav-item ${view === item.key ? 'active' : ''}`}
+                onClick={() => {
+                  openDesign(null)
+                  setView(item.key)
+                }}
+              >
+                <Icon size={16} />
+                <span>{item.label}</span>
+                {typeof count === 'number' && count > 0 && (
+                  <span className="nav-count">{count}</span>
+                )}
+              </button>
             </div>
           )
         })}
       </nav>
-      <div
+      <button
         className={`nav-item ${view === 'settings' ? 'active' : ''}`}
-        style={{ margin: '0 8px', borderTop: '1px solid var(--border-subtle)', borderRadius: 0, paddingTop: 10 }}
-        onClick={() => { openDesign(null); setView('settings') }}
+        style={{
+          margin: '0 8px',
+          borderTop: '1px solid var(--border-subtle)',
+          borderRadius: 0,
+          paddingTop: 10
+        }}
+        onClick={() => {
+          openDesign(null)
+          setView('settings')
+        }}
       >
         <IconSettings size={16} />
         <span>Settings</span>
-      </div>
-      <div style={{ padding: '8px 14px 10px', fontSize: 'var(--fs-xs)', color: 'var(--text-faint)' }}>
-        Multi-agent engine · v0.1.0
+      </button>
+      <div
+        style={{ padding: '8px 14px 10px', fontSize: 'var(--fs-xs)', color: 'var(--text-faint)' }}
+      >
+        Design · Build · Test · Learn
       </div>
     </aside>
   )
