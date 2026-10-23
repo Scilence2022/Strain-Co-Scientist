@@ -70,6 +70,21 @@ describe('renderer synchronization', () => {
     expect(store.getState().snapshot?.designs).toEqual([item])
   })
 
+  it('keeps the current workspace and selection mounted during a background refresh', async () => {
+    const { store, api } = setup()
+    await store.getState().init()
+    store.getState().openDesign('design1')
+    const pending = deferred<ReturnType<typeof snapshot>>()
+    api.getSnapshot.mockReturnValueOnce(pending.promise)
+    const refresh = store.getState().refreshSnapshot()
+    expect(store.getState().loadingSnapshot).toBe(false)
+    expect(store.getState().snapshot?.campaign.id).toBe('campaign1')
+    expect(store.getState().selectedDesignId).toBe('design1')
+    pending.resolve(snapshot())
+    await refresh
+    expect(store.getState().selectedDesignId).toBe('design1')
+  })
+
   it('keeps events received during initial loading', async () => {
     const { store, api, emit } = setup()
     const loading = deferred<ReturnType<typeof snapshot>>()

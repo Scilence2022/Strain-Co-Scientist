@@ -3,16 +3,18 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { snapshot, design } from './fixtures'
+import type { StrainDesign } from '../src/shared/domain'
 import type { EngineEvent, RecordResultInput } from '../src/shared/ipc'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir() } }))
 import { Engine } from '../src/main/engine/Engine'
 
 const active: { engine: Engine; root: string }[] = []
-async function setup() {
+async function setup(status: StrainDesign['status'] = 'active') {
   const root = await mkdtemp(join(tmpdir(), 'strain-data-'))
   const snap = snapshot()
   snap.designs = [design('a'), design('b')]
+  snap.designs[0].status = status
   snap.designs[0].quantPrediction = { metric: 'titer', direction: 'increase', relativeChange: 0.5 }
   snap.matches = [{ id: 'match1', campaignId: 'campaign1', cycle: 1, createdAt: 2, designAId: 'a', designBId: 'b', winnerId: 'a', mode: 'single-turn', transcript: '', rationale: '', eloDelta: 16, scoresA: { effectiveness: 8 }, scoresB: { effectiveness: 8 } }]
   await mkdir(join(root, 'campaigns/campaign1'), { recursive: true })
@@ -40,6 +42,35 @@ describe('campaign data consistency', () => {
     expect(events.some((e) => e.kind === 'match-added' && e.match.winnerId === null)).toBe(true)
     await engine.updateTournamentConfig('campaign1', snap.campaign.tournamentConfig)
     expect(engine.getSnapshot('campaign1')!.designs).toEqual(current.designs)
+  })
+
+  it('preserves experiment traceability across a store reload and prevents shortlisting an unreviewed design', async () => {
+    const { engine } = await setup('reviewing')
+    const input: RecordResultInput = { campaignId: 'campaign1', designId: 'a', outcome: 'inconclusive', observations: 'Assay variability', runLabel: 'Batch-12', strainLabel: 'Strain-03', conditions: 'Different carbon source' }
+    const recorded = await engine.recordExperimentalResult(input)
+    expect(recorded).toMatchObject(input)
+    const saved = active[active.length - 1]
+    await engine.shutdown()
+    const reloaded = new Engine(() => {}, saved.root)
+    saved.engine = reloaded
+    expect(reloaded.getSnapshot('campaign1')!.results[0]).toMatchObject(input)
+    expect(() => reloaded.flagDesign('a', true)).toThrow('Only reviewed, active designs')
+  })
+
+  it('updates legacy project reference conditions without rewriting old results or predictions', async () => {
+    const { engine, events } = await setup()
+    const before = engine.getSnapshot('campaign1')!
+    const reference = { metric: 'yield' as const, baselineValue: 0.2, targetValue: 0.4, unit: 'g/g glucose', conditions: 'New reference conditions' }
+    await engine.updateLabContext('campaign1', reference)
+    const current = engine.getSnapshot('campaign1')!
+    expect(current.campaign.labContext).toEqual(reference)
+    expect(current.designs[0].quantPrediction).toEqual(before.designs[0].quantPrediction)
+    expect(events.some((e) => e.kind === 'campaign-upsert' && e.campaign.labContext?.metric === 'yield')).toBe(true)
+    const saved = active[active.length - 1]
+    await engine.shutdown()
+    const reloaded = new Engine(() => {}, saved.root)
+    saved.engine = reloaded
+    expect(reloaded.getSnapshot('campaign1')!.campaign.labContext).toEqual(reference)
   })
 
   it('clears stale calibration when the last comparable result is disputed', async () => {

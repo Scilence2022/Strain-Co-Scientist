@@ -16,7 +16,7 @@ export function ExpertView(): JSX.Element {
   const { snapshot, refreshSnapshot } = useStore()
   if (!snapshot) return <div className="page"><Empty icon={<IconExpert size={36} />} title="No campaign selected" /></div>
   const campaign = snapshot.campaign
-  const active = snapshot.designs.filter((d) => d.status !== 'rejected')
+  const active = snapshot.designs.filter((d) => d.status === 'active' || d.status === 'flagged')
   const flagged = snapshot.designs.filter((d) => d.status === 'flagged')
   const terminal =
     campaign.status === 'completed' || campaign.status === 'stopped' || campaign.status === 'error'
@@ -24,7 +24,7 @@ export function ExpertView(): JSX.Element {
   return (
     <div className="page page-narrow col gap-lg">
       <div>
-        <h2 style={{ fontSize: 'var(--fs-xl)', marginBottom: 6 }}>Expert-in-the-loop</h2>
+        <h2 style={{ fontSize: 'var(--fs-xl)', marginBottom: 6 }}>Scientist input</h2>
         <div className="faint" style={{ fontSize: 'var(--fs-sm)' }}>
           Steer the system: refine the goal, contribute your own design, review designs, and flag candidates for the wet lab.
         </div>
@@ -37,10 +37,10 @@ export function ExpertView(): JSX.Element {
 
       <div className="card">
         <div className="card-head">
-          <div className="card-title">Flagged for wet-lab ({flagged.length})</div>
+          <div className="card-title">Lab shortlist ({flagged.length})</div>
         </div>
         {flagged.length === 0 ? (
-          <span className="faint">No designs flagged. Flag promising candidates from the Designs view or here.</span>
+          <span className="faint">No candidates shortlisted. Compare designs in Design strategies and choose candidates for your lab.</span>
         ) : (
           <div className="col gap-sm">
             {flagged.map((d) => (
@@ -56,7 +56,7 @@ export function ExpertView(): JSX.Element {
                     refreshSnapshot()
                   }}
                 >
-                  <IconFlag size={13} /> Unflag
+                  <IconFlag size={13} /> Remove from shortlist
                 </button>
               </div>
             ))}
@@ -65,7 +65,7 @@ export function ExpertView(): JSX.Element {
       </div>
 
       <div className="card">
-        <div className="section-title">Quick-flag a design</div>
+        <div className="section-title">Add a candidate to your lab shortlist</div>
         {active.length === 0 ? (
           <span className="faint">No designs yet.</span>
         ) : (
@@ -81,7 +81,7 @@ export function ExpertView(): JSX.Element {
                     refreshSnapshot()
                   }}
                 >
-                  {d.status === 'flagged' ? 'Unflag' : 'Flag'}
+                  {d.status === 'flagged' ? 'Remove from shortlist' : 'Shortlist'}
                 </button>
               </div>
             ))}
@@ -138,7 +138,7 @@ function RecordResult({
   terminal: boolean
 }): JSX.Element {
   const { snapshot } = useStore()
-  const active = snapshot?.designs.filter((d) => d.status !== 'rejected') ?? []
+  const active = snapshot?.designs.filter((d) => d.status === 'active' || d.status === 'flagged') ?? []
   // Flagged designs (queued for the wet lab) float to the top of the picker.
   const ordered = [...active].sort((a, b) => {
     const fa = a.status === 'flagged' ? 0 : 1
@@ -330,7 +330,7 @@ function updateIv(
 
 function ProvideReview({ onDone }: { onDone: () => void }): JSX.Element {
   const { snapshot } = useStore()
-  const active = snapshot?.designs.filter((d) => d.status !== 'rejected') ?? []
+  const active = snapshot?.designs.filter((d) => d.status === 'active' || d.status === 'flagged') ?? []
   const [designId, setDesignId] = useState('')
   const [verdict, setVerdict] = useState<'pass' | 'revise' | 'reject'>('pass')
   const [narrative, setNarrative] = useState('')

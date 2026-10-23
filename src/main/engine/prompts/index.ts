@@ -14,6 +14,7 @@ import {
   RESULT_OUTCOME_LABELS
 } from '@shared/domain'
 import { HOST_PRESETS, hostDisplayName } from '@shared/hosts'
+import { labContextLines } from '@shared/workbench'
 
 /**
  * Strain-engineering-adapted prompt library. Each builder mirrors a strategy
@@ -29,6 +30,8 @@ export const SYSTEM_PREAMBLE = `You are an agent in Strain Co-Scientist, a multi
 Your domain is metabolic and strain engineering: improving titer, rate, and yield (TRY) of target products, broadening substrate range, improving tolerance/robustness, and reducing byproducts in industrial host organisms.
 
 You reason like an expert metabolic engineer. You ground claims in pathway biochemistry, enzyme kinetics, cofactor/redox balance, thermodynamics (e.g. ΔG, MDF), regulation (transcriptional/allosteric/feedback), genetic tractability of the host, and metabolic burden. You propose concrete genetic interventions (knockouts, overexpression, knockdowns, promoter/RBS tuning, heterologous pathways, transporter and cofactor engineering, dynamic regulation, enzyme engineering) with a clear mechanism and a Design-Build-Test-Learn (DBTL) plan.
+
+Make the proposal useful to a wet-lab metabolic engineer: separate measured findings, literature claims and predictions. Do not invent assay data or treat model confidence as experimental validation. In each DBTL plan, identify the reference strain and controls, readouts for production and growth/byproducts, confounders from culture conditions, and a decision rule tied to the stated success target. Start with a minimal discriminating experiment before combining many edits. State missing information explicitly. In citation notes, describe relevance and host/condition differences; a supplied citation alone is not verification.
 
 You honour the default criteria: alignment with the goal, plausibility (metabolic/thermodynamic feasibility), novelty, testability (genetic tractability + assay availability), host compatibility (burden/toxicity/stability), and safety/biosafety. You never propose unsafe, dual-use, or biosafety-violating work.`
 
@@ -63,6 +66,9 @@ ${hostBlock(campaign)}
 
 Full goal statement:
 ${campaign.goal}
+
+LAB REFERENCE CONTEXT (scientist supplied):
+${labContextLines(campaign.labContext).join("\n") || "Not supplied. Identify missing reference conditions; do not invent measured baselines."}
 
 Constraints:
 - Available genetic tools: ${campaign.constraints.availableTools.join(', ') || 'standard toolkit'}
@@ -398,7 +404,7 @@ export function resultsToText(results: ExperimentalResult[]): string {
           }${Math.round(((r.measuredValue - r.baselineValue) / r.baselineValue) * 100)}%)`
         : ''
     const reps = r.replicates ? ` [n=${r.replicates}]` : ''
-    return `  - ${RESULT_OUTCOME_LABELS[r.outcome]}${delta}${reps}: ${r.observations}`
+    return `  - ${RESULT_OUTCOME_LABELS[r.outcome]}${delta}${reps}${r.runLabel ? ` [run: ${r.runLabel}]` : ''}${r.strainLabel ? ` [strain: ${r.strainLabel}]` : ''}${r.conditions ? ` [conditions: ${r.conditions}]` : ''}: ${r.observations}`
   })
   return `MEASURED RESULTS (ground truth — weigh ABOVE predicted reasoning):\n${lines.join('\n')}`
 }

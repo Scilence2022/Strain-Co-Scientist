@@ -52,6 +52,7 @@ export function registerIpc(engine: Engine, isTrusted: (event: IpcMainInvokeEven
     resumeCampaign: (id) => engine.resumeCampaign(id),
     stopCampaign: (id) => engine.stopCampaign(id),
 
+    updateLabContext: (id, context) => engine.updateLabContext(id, context),
     refineGoal: (id, addendum) => engine.refineGoal(id, addendum),
     submitExpertDesign: (input) => engine.submitExpertDesign(input),
     submitExpertReview: (input) => engine.submitExpertReview(input),
