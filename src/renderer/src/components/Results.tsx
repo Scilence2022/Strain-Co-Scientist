@@ -2,7 +2,8 @@ import { useId, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { METRIC_LABELS, METRIC_UNITS, predictionLabel } from '@shared/workbench'
 import type { ExperimentalResult, QuantPrediction, ResultOutcome } from '@shared/domain'
-import { RESULT_OUTCOME_LABELS } from '@shared/domain'
+import { RESULT_OUTCOME_LABELS, type StrainDesign } from '@shared/domain'
+import { METABOLIC_TARGET_LABELS, resultScopeLabel } from '@shared/engineering'
 import { OutcomeBadge, timeAgo } from './ui'
 
 const OUTCOMES = Object.keys(RESULT_OUTCOME_LABELS) as ResultOutcome[]
@@ -29,17 +30,21 @@ export function resultDelta(r: ExperimentalResult): string | null {
 export function RecordResultForm({
   campaignId,
   designId,
+  initialTargetId,
   onDone
 }: {
   campaignId: string
   designId: string
+  initialTargetId?: string
   onDone?: () => void
 }): JSX.Element {
   const { snapshot } = useStore()
   const design = snapshot?.designs.find((d) => d.id === designId)
-  const lab = snapshot?.campaign.labContext
+  const lab = design?.engineeringScope ? design.engineeringScope.labContext : snapshot?.campaign.labContext
   const initialMetric = design?.quantPrediction?.metric ?? lab?.metric ?? 'titer'
   const prefix = useId()
+  const [targetId, setTargetId] = useState(initialTargetId ?? '')
+  const target = design?.metabolicTargets?.find((entry) => entry.id === targetId)
   const [outcome, setOutcome] = useState<ResultOutcome | ''>('')
   const [metric, setMetric] = useState<QuantPrediction['metric']>(initialMetric)
   const [measuredValue, setMeasuredValue] = useState('')
@@ -84,6 +89,7 @@ export function RecordResultForm({
       await window.api.recordExperimentalResult({
         campaignId,
         designId,
+        targetId: target?.id,
         outcome,
         metric,
         measuredValue: num(measuredValue),
@@ -114,7 +120,27 @@ export function RecordResultForm({
   }
   return (
     <div className="col gap-md">
-      {design && (
+      {!!design?.metabolicTargets?.length && (
+        <div className="field">
+          <label htmlFor={`${prefix}-target`}>Result scope</label>
+          <select id={`${prefix}-target`} value={targetId} onChange={(e) => {
+            setTargetId(e.target.value)
+            setOutcome('')
+            setSaved(false)
+          }}>
+            <option value="">Whole design</option>
+            {design.metabolicTargets.map((entry) =>
+              <option key={entry.id} value={entry.id}>{entry.name} · {METABOLIC_TARGET_LABELS[entry.category]}</option>
+            )}
+          </select>
+        </div>
+      )}
+      {target && <div className="brief-summary">
+        <b>{target.name}</b>
+        <div className="hint">{target.hypothesis}</div>
+        <div className="hint">Readout: {target.readout}</div>
+      </div>}
+      {design && !target && (
         <div className="brief-summary">
           <b>{predictionLabel(design)}</b>
           <div className="hint">
@@ -181,9 +207,10 @@ export function RecordResultForm({
         </div>
       </div>
       <div className="hint">
-        Confirmed = meets the predicted improvement; Partial = some support; Refuted = contradicts
-        it. Use Inconclusive for uncertain assays and Build failed for construction failures. These
-        conclusions update evidence ranking.
+        {target
+          ? 'Choose the conclusion for this target hypothesis and describe the controls that isolate its effect.'
+          : 'Choose the conclusion for the combined design. Confirmed means the measured effect meets the prediction.'}
+        {' '}Use Inconclusive for uncertain assays and Build failed for construction failures.
       </div>
       <div className="grid grid-2">
         <div className="field">
@@ -207,7 +234,7 @@ export function RecordResultForm({
             onChange={(e) => setBaselineValue(e.target.value)}
             placeholder={
               lab?.metric === metric && lab.baselineValue !== undefined
-                ? `Project baseline: ${lab.baselineValue}; enter actual control`
+                ? `Planning reference: ${lab.baselineValue}; enter actual control`
                 : 'Measured control / parental strain'
             }
           />
@@ -291,8 +318,8 @@ export function RecordResultForm({
       )}
       {saved && (
         <div className="measurement-preview" role="status">
-          Result saved. Evidence ranking has been updated. Resume or re-open research to incorporate
-          it into new proposals.
+          {target ? 'Target feedback saved.' : 'Whole-design result saved.'}
+          {' '}Resume or re-open research with this host and pathway to incorporate it into new proposals.
         </div>
       )}
       <div className="row">
@@ -309,9 +336,11 @@ export function RecordResultForm({
 /** Render a design's recorded results, with an optional dispute/restore control. */
 export function ResultsList({
   results,
+  design,
   onChanged
 }: {
   results: ExperimentalResult[]
+  design?: StrainDesign
   onChanged?: () => void
 }): JSX.Element {
   if (results.length === 0) return <span className="faint">No results recorded yet.</span>
@@ -326,6 +355,7 @@ export function ResultsList({
             <div key={r.id} className="lineage-node" style={{ opacity: disputed ? 0.55 : 1 }}>
               <div className="row gap-sm" style={{ marginBottom: 4 }}>
                 <OutcomeBadge outcome={r.outcome} />
+                <span className="badge">{resultScopeLabel(r, design)}</span>
                 {r.metric && <span className="badge">{r.metric}</span>}
                 {delta && (
                   <span className="mono" style={{ color: 'var(--text)' }}>

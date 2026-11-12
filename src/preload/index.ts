@@ -22,6 +22,9 @@ const api: PreloadBridge = {
   getSnapshot: (id) => ipcRenderer.invoke('getSnapshot', id),
   updateTournamentConfig: (id, config) => ipcRenderer.invoke('updateTournamentConfig', id, config),
 
+  suggestEngineeringOptions: (id, stage) => ipcRenderer.invoke('suggestEngineeringOptions', id, stage),
+  updateEngineeringPlan: (id, decision) => ipcRenderer.invoke('updateEngineeringPlan', id, decision),
+
   startCampaign: (id) => ipcRenderer.invoke('startCampaign', id),
   pauseCampaign: (id) => ipcRenderer.invoke('pauseCampaign', id),
   resumeCampaign: (id) => ipcRenderer.invoke('resumeCampaign', id),

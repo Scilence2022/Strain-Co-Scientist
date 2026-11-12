@@ -12,6 +12,9 @@ import type {
 } from '@shared/domain'
 import { DEFAULT_TOURNAMENT_CONFIG, evidenceGradeFor, type TournamentConfig } from '@shared/domain'
 import { hostDisplayName } from '@shared/hosts'
+import { effectiveHost, engineeringScope, formatHost, inEngineeringScope, resultScopeLabel,
+  type EngineeringDecision, type EngineeringPlan, type PlanningStage } from '@shared/engineering'
+import { decideEngineeringPlan, suggestEngineeringOptions } from './EngineeringPlanning'
 import type {
   CreateCampaignInput,
   EngineEvent,
@@ -44,6 +47,7 @@ export class Engine {
   private llm: LLMClient
   private ctx: EngineContext
   private running = new Map<string, { supervisor: Supervisor; done: Promise<void> }>()
+  private planning = new Map<string, AbortController>()
   private closing = false
   private deleting = new Set<string>()
   private lifecycleVersions = new Map<string, number>()
@@ -146,12 +150,56 @@ export class Engine {
 
   async deleteCampaign(id: string): Promise<void> {
     this.deleting.add(id)
+    this.planning.get(id)?.abort()
     try {
       await this.stopCampaign(id)
       await this.store.deleteCampaign(id)
     } finally {
       this.deleting.delete(id)
     }
+  }
+
+  async suggestEngineeringOptions(id: string, stage: PlanningStage): Promise<Campaign> {
+    const campaign = this.campaignForPlanning(id)
+    if (this.planning.has(id)) throw new Error('Planning suggestions are already in progress')
+    const controller = new AbortController()
+    this.planning.set(id, controller)
+    const { engineering, goal, labContext } = campaign
+    try {
+      const plan = await suggestEngineeringOptions(this.ctx.forRun(controller.signal), structuredClone(campaign), stage)
+      const current = this.campaignForPlanning(id)
+      if (current.engineering !== engineering || current.goal !== goal || current.labContext !== labContext) {
+        throw new Error('The brief or selection changed. Generate suggestions again for the current context.')
+      }
+      return await this.saveEngineeringPlan(current, plan)
+    } finally {
+      this.planning.delete(id)
+    }
+  }
+
+  async updateEngineeringPlan(id: string, decision: EngineeringDecision): Promise<Campaign> {
+    const campaign = this.campaignForPlanning(id)
+    return this.saveEngineeringPlan(campaign, decideEngineeringPlan(campaign, decision, () => genId(12)), true)
+  }
+
+  private campaignForPlanning(id: string): Campaign {
+    const campaign = this.store.getCampaign(id)
+    if (!campaign || this.deleting.has(id) || this.closing) throw new Error('Project is unavailable')
+    if (this.running.has(id)) throw new Error('Pause research and wait for it to finish pausing before editing the plan')
+    return campaign
+  }
+
+  private async saveEngineeringPlan(campaign: Campaign, engineering: EngineeringPlan, decision = false): Promise<Campaign> {
+    const selectionChanged = campaign.engineering?.selectedHostId !== engineering.selectedHostId ||
+      campaign.engineering?.selectedPathwayId !== engineering.selectedPathwayId
+    campaign.engineering = engineering
+    if (selectionChanged) campaign.researchPlan = undefined
+    campaign.updatedAt = Date.now()
+    this.store.upsertCampaign(campaign)
+    this.emit({ kind: 'campaign-upsert', campaignId: campaign.id, campaign })
+    if (decision) this.ctx.log(campaign.id, 'expert', 'info', 'Scientist updated the engineering plan')
+    await this.store.flush()
+    return campaign
   }
 
   // -- Lifecycle ------------------------------------------------------------
@@ -178,6 +226,7 @@ export class Engine {
       await previous.done
     }
     if (this.closing || this.deleting.has(id) || this.lifecycleVersions.get(id) !== version || !this.store.getCampaign(id) || this.running.has(id)) return
+    this.planning.get(id)?.abort()
     this.setStatus(id, 'running')
     const supervisor = new Supervisor(this.ctx, id)
     const done = Promise.resolve().then(() => this.launch(id, supervisor))
@@ -241,14 +290,14 @@ export class Engine {
     const campaign = this.store.getCampaign(id)
     if (!campaign) return { ok: false, message: 'Campaign not found' }
     const snapshot = this.store.getSnapshot(id)
-    const designs = (snapshot?.designs ?? []).filter((d) => d.status !== 'rejected')
+    const designs = (snapshot?.designs ?? []).filter((d) => d.status !== 'rejected' && inEngineeringScope(campaign, d))
     if (designs.length === 0) {
       return { ok: false, message: 'No designs to synthesise an overview from yet.' }
     }
     const stats = snapshot?.statistics ?? []
     const cycle = stats.length ? stats[stats.length - 1].cycle : 0
     try {
-      const meta = await new MetaReviewAgent(this.ctx).generate(campaign, cycle)
+      const meta = await new MetaReviewAgent(this.ctx).generate(structuredClone(campaign), cycle)
       if (isEmptyOverview(meta)) {
         this.ctx.log(id, 'meta-review', 'warning', 'Manual overview generation returned no usable content')
         return {
@@ -385,6 +434,11 @@ export class Engine {
     const campaign = this.store.getCampaign(input.campaignId)
     if (!campaign) throw new Error('campaign not found')
     const now = Date.now()
+    const scope = engineeringScope(campaign)
+    const host = formatHost(effectiveHost(campaign))
+    if (scope && input.chassis.trim() && input.chassis.trim() !== host) {
+      throw new Error('Use the selected host for a design within this engineering plan')
+    }
     const design: StrainDesign = {
       id: genId(12),
       campaignId: input.campaignId,
@@ -392,7 +446,9 @@ export class Engine {
       updatedAt: now,
       title: input.title,
       summary: input.summary,
-      chassis: input.chassis || hostDisplayName(campaign.host.preset, campaign.host.customName),
+      chassis: scope ? host : input.chassis || host,
+      engineeringScope: scope,
+      metabolicTargets: input.metabolicTargets?.map((target) => ({ ...target, id: genId(12) })),
       interventions: input.interventions,
       mechanism: input.mechanism,
       predictedEffect: input.predictedEffect,
@@ -464,12 +520,16 @@ export class Engine {
     const design = this.store.getDesign(input.campaignId, input.designId)
     if (!design) throw new Error('design not found')
 
+    if (input.targetId !== undefined && !design.metabolicTargets?.some((target) => target.id === input.targetId)) {
+      throw new Error('Metabolic target does not belong to this design')
+    }
     const result: ExperimentalResult = {
       id: genId(12),
       campaignId: input.campaignId,
       designId: input.designId,
       createdAt: Date.now(),
       outcome: input.outcome,
+      targetId: input.targetId,
       metric: input.metric,
       measuredValue: input.measuredValue,
       baselineValue: input.baselineValue,
@@ -483,13 +543,15 @@ export class Engine {
       status: 'recorded'
     }
     this.ctx.addResult(result)
-    this.refreshEvidence(input.campaignId, input.designId)
-    this.recomputeCalibration(input.campaignId)
+    if (!result.targetId) {
+      this.refreshEvidence(input.campaignId, input.designId)
+      this.recomputeCalibration(input.campaignId)
+    }
     this.ctx.log(
       input.campaignId,
       'expert',
       result.outcome === 'refuted' || result.outcome === 'build-failed' ? 'warning' : 'success',
-      `Experimental result for "${design.title}": ${result.outcome} → evidence "${design.evidence}"`,
+      `Experimental result for "${design.title}" (${resultScopeLabel(result, design)}): ${result.outcome}`,
       { designId: design.id, resultId: result.id, outcome: result.outcome }
     )
     if (campaign.status === 'completed' || campaign.status === 'stopped' || campaign.status === 'error') {
@@ -511,8 +573,10 @@ export class Engine {
     result.status = disputed ? 'disputed' : 'recorded'
     result.updatedAt = Date.now()
     this.ctx.updateResult(result)
-    this.refreshEvidence(campaignId, result.designId)
-    this.recomputeCalibration(campaignId)
+    if (!result.targetId) {
+      this.refreshEvidence(campaignId, result.designId)
+      this.recomputeCalibration(campaignId)
+    }
     this.ctx.log(
       campaignId,
       'expert',
@@ -563,6 +627,7 @@ export class Engine {
 
   async shutdown(): Promise<void> {
     this.closing = true
+    for (const controller of this.planning.values()) controller.abort()
     const runs = [...this.running.entries()]
     for (const [id, run] of runs) {
       if (this.store.getCampaign(id)?.status === 'running') this.setStatus(id, 'paused')

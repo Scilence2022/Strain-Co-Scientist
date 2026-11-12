@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type {
   CalibrationProfile,
   ExperimentalResult,
@@ -54,7 +55,7 @@ function buildPairs(designs: StrainDesign[], results: ExperimentalResult[]): Pai
   // Most-recent recorded result per design that has a computable measured change.
   const latest = new Map<string, ExperimentalResult>()
   for (const r of results) {
-    if (r.status !== 'recorded') continue
+    if (r.status !== 'recorded' || r.targetId) continue
     if (signedMeasured(r) === undefined) continue
     const prediction = byId.get(r.designId)?.quantPrediction
     if (r.metric && prediction && r.metric !== prediction.metric) continue
@@ -210,4 +211,9 @@ export function calibrationNote(profile: CalibrationProfile | undefined): string
     )
   }
   return lines.join(' ')
+}
+
+export function resultFingerprint(results: ExperimentalResult[]): string {
+  const states = results.map((r) => [r.id, r.status, r.updatedAt ?? r.createdAt])
+  return createHash('sha256').update(JSON.stringify(states)).digest('hex')
 }

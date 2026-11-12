@@ -6,7 +6,7 @@ import type {
   StrainDesign
 } from './domain'
 import { EVIDENCE_GRADE_LABELS, INTERVENTION_LABELS, RESULT_OUTCOME_LABELS } from './domain'
-import { hostDisplayName } from './hosts'
+import { effectiveHost, formatHost, METABOLIC_TARGET_LABELS, PATHWAY_EVIDENCE_LABELS, resultScopeLabel } from './engineering'
 
 export const METRIC_LABELS = {
   titer: 'Titer',
@@ -52,15 +52,16 @@ export function predictionLabel(d: StrainDesign): string {
 /** Recorded results with opposing conclusions must remain visible to the scientist. */
 export function hasConflictingResults(results: ExperimentalResult[]): boolean {
   const recorded = results.filter((r) => r.status === 'recorded')
-  return (
-    recorded.some((r) => r.outcome === 'refuted') &&
-    recorded.some((r) => r.outcome === 'confirmed' || r.outcome === 'partial')
+  const refutedScopes = new Set(recorded.filter((r) => r.outcome === 'refuted').map((r) => r.targetId))
+  return recorded.some((r) =>
+    (r.outcome === 'confirmed' || r.outcome === 'partial') && refutedScopes.has(r.targetId)
   )
 }
 
 export function designGaps(d: StrainDesign, results: ExperimentalResult[]): string[] {
   return [
     !canShortlist(d) ? 'Review required before shortlisting' : '',
+    d.engineeringScope && !d.metabolicTargets?.length ? 'No metabolic target hypothesis specified' : '',
     !d.citations.length ? 'No references supplied' : '',
     !d.experimentalPlan.some((s) => s.phase === 'test') ? 'Test plan not specified' : '',
     !d.quantPrediction?.baselineNote ? 'Prediction baseline not specified' : '',
@@ -74,7 +75,7 @@ export function experimentBrief(snapshot: CampaignSnapshot, designs: StrainDesig
   const lines = [
     `# Experiment brief — ${c.title}`,
     '',
-    `Host: ${hostDisplayName(c.host.preset, c.host.customName)} ${c.host.strainBackground ?? ''}`,
+    `Current project host: ${formatHost(effectiveHost(c))}`,
     `Product: ${c.productTarget}`,
     `Goal: ${c.goal}`,
     '',
@@ -95,6 +96,13 @@ export function experimentBrief(snapshot: CampaignSnapshot, designs: StrainDesig
       `## ${d.title}`,
       `Design ID: ${d.id}`,
       `Chassis: ${d.chassis || 'Not specified'}`,
+      `Pathway: ${d.engineeringScope?.pathway?.title ?? 'Unspecified'}`,
+      ...(d.engineeringScope?.pathway ? [
+        `Pathway evidence: ${PATHWAY_EVIDENCE_LABELS[d.engineeringScope.pathway.evidence]} (${d.engineeringScope.pathway.source} supplied)`,
+        d.engineeringScope.pathway.summary,
+        d.engineeringScope.pathway.limitations,
+        ...(d.engineeringScope.pathway.citations ?? []).map((r) => `- ${r.title}${r.url ? ` (${r.url})` : ''}${r.note ? ` — ${r.note}` : ''}`)
+      ] : []),
       `Evidence: ${EVIDENCE_GRADE_LABELS[d.evidence ?? 'predicted-only']}`,
       '',
       d.summary,
@@ -104,12 +112,25 @@ export function experimentBrief(snapshot: CampaignSnapshot, designs: StrainDesig
         (iv) => `- ${INTERVENTION_LABELS[iv.type]} — ${iv.targets.join(', ')}: ${iv.details}`
       ),
       '',
+      ...(d.engineeringScope?.labContext ? [
+        '### Reference recorded with the design',
+        ...labContextLines(d.engineeringScope.labContext).map((s) => `- ${s}`),
+        ''
+      ] : []),
       '### Mechanism and prediction',
       d.mechanism,
       d.predictedEffect,
       predictionLabel(d),
       `Prediction reference: ${d.quantPrediction?.baselineNote || 'Not specified'}`,
       '',
+      ...(d.metabolicTargets?.length ? [
+        '### Metabolic target hypotheses',
+        ...d.metabolicTargets.map((target) => {
+          const feedback = results.filter((r) => r.targetId === target.id)
+          return `- ${target.name} (${METABOLIC_TARGET_LABELS[target.category]}${target.cofactors?.length ? `; ${target.cofactors.join(', ')}` : ''}): ${target.hypothesis} Readout: ${target.readout} Limitation: ${target.limitation}${hasConflictingResults(feedback) ? ' Conflicting observations recorded.' : ''}`
+        }),
+        ''
+      ] : []),
       '### Proposed DBTL plan',
       ...(d.experimentalPlan.length
         ? d.experimentalPlan.map((s) => `- ${s.phase}: ${s.description}`)
@@ -131,7 +152,7 @@ export function experimentBrief(snapshot: CampaignSnapshot, designs: StrainDesig
       ...(results.length
         ? results.map(
             (r) =>
-              `- [${r.status}] ${RESULT_OUTCOME_LABELS[r.outcome]}; ${r.metric ?? 'metric unspecified'}; measured ${r.measuredValue ?? '—'} vs reference ${r.baselineValue ?? '—'} ${r.unit ?? ''}; n=${r.replicates ?? 'unspecified'}; run=${r.runLabel ?? 'unspecified'}; strain=${r.strainLabel ?? 'unspecified'}; conditions=${r.conditions ?? 'unspecified'}. ${r.observations}`
+              `- [${r.status}] ${RESULT_OUTCOME_LABELS[r.outcome]} · ${resultScopeLabel(r, d)}; ${r.metric ?? 'metric unspecified'}; measured ${r.measuredValue ?? '—'} vs reference ${r.baselineValue ?? '—'} ${r.unit ?? ''}; n=${r.replicates ?? 'unspecified'}; run=${r.runLabel ?? 'unspecified'}; strain=${r.strainLabel ?? 'unspecified'}; conditions=${r.conditions ?? 'unspecified'}. ${r.observations}`
           )
         : ['No measurements recorded.']),
       '',
@@ -168,26 +189,38 @@ export function resultsCsv(snapshot: CampaignSnapshot): string {
     'Replicates',
     'Conditions',
     'Observations',
-    'Author'
+    'Author',
+    'Design host',
+    'Pathway',
+    'Target ID',
+    'Result scope'
   ]
-  const rows = snapshot.results.map((r) => [
-    snapshot.campaign.title,
-    r.designId,
-    snapshot.designs.find((d) => d.id === r.designId)?.title ?? '',
-    r.runLabel,
-    r.strainLabel,
-    new Date(r.createdAt).toISOString(),
-    r.outcome,
-    r.status,
-    r.metric,
-    r.measuredValue,
-    r.baselineValue,
-    r.unit,
-    r.replicates,
-    r.conditions,
-    r.observations,
-    r.author
-  ])
+  const designs = new Map(snapshot.designs.map((d) => [d.id, d]))
+  const rows = snapshot.results.map((r) => {
+    const design = designs.get(r.designId)
+    return [
+      snapshot.campaign.title,
+      r.designId,
+      design?.title,
+      r.runLabel,
+      r.strainLabel,
+      new Date(r.createdAt).toISOString(),
+      r.outcome,
+      r.status,
+      r.metric,
+      r.measuredValue,
+      r.baselineValue,
+      r.unit,
+      r.replicates,
+      r.conditions,
+      r.observations,
+      r.author,
+      design?.chassis,
+      design?.engineeringScope?.pathway?.title,
+      r.targetId,
+      resultScopeLabel(r, design)
+    ]
+  })
   return [header, ...rows].map((row) => row.map(cell).join(',')).join('\r\n')
 }
 

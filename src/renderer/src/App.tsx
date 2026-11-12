@@ -15,6 +15,7 @@ import { Sidebar } from './views/Sidebar'
 import { TopBar } from './views/TopBar'
 import { Dashboard } from './views/Dashboard'
 import { Campaigns } from './views/Campaigns'
+import { EngineeringPlanning } from './views/EngineeringPlanning'
 import { Workbench } from './views/Workbench'
 import { DesignsExplorer, DesignDrawer } from './views/DesignsExplorer'
 import { TournamentView } from './views/TournamentView'
@@ -33,7 +34,9 @@ export const NAV: {
 }[] = [
   { key: 'dashboard', label: 'Research workbench', group: 'Lab workflow', icon: IconDashboard },
   { key: 'campaigns', label: 'Research projects', group: 'Lab workflow', icon: IconCampaigns },
-  { key: 'designs', label: 'Design strategies', group: 'Lab workflow', icon: IconBeaker },
+  { key: 'hosts', label: 'Host selection', group: 'Lab workflow', icon: IconBeaker },
+  { key: 'pathways', label: 'Metabolic pathways', group: 'Lab workflow', icon: IconGraph },
+  { key: 'designs', label: 'Metabolic targets', group: 'Lab workflow', icon: IconBeaker },
   {
     key: 'experiments',
     label: 'Experiments & results',
@@ -200,6 +203,10 @@ function renderView(view: ViewKey): JSX.Element {
       return <Dashboard />
     case 'campaigns':
       return <Campaigns />
+    case 'hosts':
+      return <EngineeringPlanning key="hosts" stage="hosts" />
+    case 'pathways':
+      return <EngineeringPlanning key="pathways" stage="pathways" />
     case 'designs':
       return <DesignsExplorer />
     case 'tournament':

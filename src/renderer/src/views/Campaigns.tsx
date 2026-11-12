@@ -1,3 +1,4 @@
+import { effectiveHost, formatHost } from '@shared/engineering'
 import { useState } from 'react'
 import { useStore } from '../store/useStore'
 import { CampaignStatusPill, Empty, timeAgo } from '../components/ui'
@@ -84,7 +85,7 @@ export function Campaigns(): JSX.Element {
                       {c.productTarget}
                     </div>
                   </td>
-                  <td className="muted">{hostDisplayName(c.host.preset, c.host.customName)}</td>
+                  <td className="muted">{formatHost(effectiveHost(c))}</td>
                   <td className="muted">
                     {OBJECTIVES.find((o) => o.value === c.objective)?.label}
                   </td>

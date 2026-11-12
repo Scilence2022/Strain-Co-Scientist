@@ -1,4 +1,5 @@
 import type { Campaign, StrainDesign } from '@shared/domain'
+import { inEngineeringScope } from '@shared/engineering'
 import type { EngineContext } from '../context'
 
 /**
@@ -43,7 +44,7 @@ export class ProximityAgent {
   recluster(campaign: Campaign, threshold = 0.22): number {
     const designs = this.ctx.store
       .getDesigns(campaign.id)
-      .filter((d) => d.status === 'active' || d.status === 'flagged')
+      .filter((d) => inEngineeringScope(campaign, d) && (d.status === 'active' || d.status === 'flagged'))
     const clusters: StrainDesign[][] = []
     for (const d of designs) {
       let placed = false
@@ -80,7 +81,7 @@ export class ProximityAgent {
   closest(campaign: Campaign, design: StrainDesign, exclude: Set<string>): StrainDesign | null {
     const others = this.ctx.store
       .getDesigns(campaign.id)
-      .filter((d) => d.id !== design.id && !exclude.has(d.id) && (d.status === 'active' || d.status === 'flagged'))
+      .filter((d) => inEngineeringScope(campaign, d) && d.id !== design.id && !exclude.has(d.id) && (d.status === 'active' || d.status === 'flagged'))
     let best: StrainDesign | null = null
     let bestSim = -1
     for (const o of others) {

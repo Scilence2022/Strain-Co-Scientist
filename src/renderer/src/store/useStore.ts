@@ -10,6 +10,8 @@ export type ViewKey =
   | 'dashboard'
   | 'monitor'
   | 'campaigns'
+  | 'hosts'
+  | 'pathways'
   | 'designs'
   | 'tournament'
   | 'proximity'

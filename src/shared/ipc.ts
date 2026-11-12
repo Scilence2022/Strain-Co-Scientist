@@ -1,3 +1,4 @@
+import type { EngineeringDecision, MetabolicTargetDraft, PlanningStage } from './engineering'
 /**
  * IPC contract shared between the Electron main process and the renderer.
  *
@@ -27,7 +28,7 @@ import type {
 /** Payload to create a campaign (id/timestamps assigned by main). */
 export type CreateCampaignInput = Omit<
   Campaign,
-  'id' | 'createdAt' | 'updatedAt' | 'status' | 'researchPlan'
+  'id' | 'createdAt' | 'updatedAt' | 'status' | 'researchPlan' | 'engineering'
 >
 
 /** A manually-authored design contributed by the scientist (expert-in-the-loop). */
@@ -39,7 +40,7 @@ export type ExpertDesignInput = Pick<
   | 'interventions'
   | 'mechanism'
   | 'predictedEffect'
-> & { campaignId: string }
+> & { campaignId: string; metabolicTargets?: MetabolicTargetDraft[] }
 
 export type ExpertReviewInput = {
   designId: string
@@ -55,6 +56,7 @@ export interface RecordResultInput {
   campaignId: string
   designId: string
   outcome: ResultOutcome
+  targetId?: string
   metric?: QuantPrediction['metric']
   measuredValue?: number
   baselineValue?: number
@@ -147,6 +149,9 @@ export interface IpcApi {
   getSnapshot(campaignId: string): Promise<CampaignSnapshot | null>
   /** Update tournament scoring config and replay the Elo ladder (no LLM re-run). */
   updateTournamentConfig(campaignId: string, config: TournamentConfig): Promise<Campaign>
+
+  suggestEngineeringOptions(campaignId: string, stage: PlanningStage): Promise<Campaign>
+  updateEngineeringPlan(campaignId: string, decision: EngineeringDecision): Promise<Campaign>
 
   // Engine control
   startCampaign(campaignId: string): Promise<void>

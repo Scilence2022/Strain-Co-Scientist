@@ -7,7 +7,8 @@ import type {
   QuantPrediction,
   StrainDesign
 } from '@shared/domain'
-import { hostDisplayName } from '@shared/hosts'
+import { effectiveHost, engineeringScope, formatHost } from '@shared/engineering'
+import { metabolicTargetSchema } from '@shared/validation'
 import { INITIAL_ELO } from '../tournament/Elo'
 
 const VALID_INTERVENTIONS: InterventionType[] = [
@@ -90,7 +91,11 @@ export function coerceDesign(
   const title = String(obj.title ?? '').trim()
   if (!title) return null
   const now = Date.now()
-  const host = hostDisplayName(campaign.host.preset, campaign.host.customName)
+  const scope = engineeringScope(campaign)
+  const host = formatHost(effectiveHost(campaign))
+  const chassis = typeof obj.chassis === 'string' ? obj.chassis.trim() : ''
+  if (scope && chassis && chassis.toLowerCase() !== host.toLowerCase()) return null
+  const targets = Array.isArray(obj.metabolicTargets) ? obj.metabolicTargets.slice(0, 12) : []
   return {
     id: newId(),
     campaignId: campaign.id,
@@ -98,7 +103,12 @@ export function coerceDesign(
     updatedAt: now,
     title,
     summary: String(obj.summary ?? ''),
-    chassis: String(obj.chassis ?? host),
+    chassis: chassis || host,
+    engineeringScope: scope,
+    metabolicTargets: targets.flatMap((raw: unknown) => {
+      const parsed = metabolicTargetSchema.safeParse(raw)
+      return parsed.success ? [{ ...parsed.data, id: newId() }] : []
+    }),
     interventions: coerceInterventions(obj.interventions),
     mechanism: String(obj.mechanism ?? ''),
     predictedEffect: String(obj.predictedEffect ?? ''),

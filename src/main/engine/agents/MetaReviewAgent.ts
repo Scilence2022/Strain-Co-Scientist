@@ -1,16 +1,16 @@
+import { engineeringScopeId, inEngineeringScope } from '@shared/engineering'
 import type {
   AgentRole,
   Campaign,
-  ExperimentalResult,
   MetaReview,
   ResearchOverviewArea,
   StrainDesign
 } from '@shared/domain'
-import { compareDesigns, RESULT_OUTCOME_LABELS } from '@shared/domain'
+import { compareDesigns } from '@shared/domain'
 import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
-import { metaReviewPrompt, SYSTEM_PREAMBLE } from '../prompts'
-import { calibrationNote } from '../learn/Calibration'
+import { metaReviewPrompt, resultsToText, SYSTEM_PREAMBLE } from '../prompts'
+import { calibrationNote, computeCalibration } from '../learn/Calibration'
 
 /** True when a meta-review carries no usable research overview (parse/content failure). */
 export function isEmptyOverview(meta: MetaReview): boolean {
@@ -36,25 +36,6 @@ function titleMatches(designTitle: string, candidate: string): boolean {
   return shared.length >= 2
 }
 
-/** Short, model-facing summary of recorded wet-lab results, keyed to design titles. */
-function summarizeResults(results: ExperimentalResult[], designs: StrainDesign[]): string {
-  const titles = new Map(designs.map((d) => [d.id, d.title]))
-  const recorded = results.filter((r) => r.status === 'recorded')
-  if (!recorded.length) return ''
-  return recorded
-    .slice(-20)
-    .map((r) => {
-      const delta =
-        typeof r.measuredValue === 'number' && typeof r.baselineValue === 'number' && r.baselineValue !== 0
-          ? ` (${r.measuredValue >= r.baselineValue ? '+' : ''}${Math.round(
-              ((r.measuredValue - r.baselineValue) / r.baselineValue) * 100
-            )}%)`
-          : ''
-      return `- ${titles.get(r.designId) ?? 'design'}: ${RESULT_OUTCOME_LABELS[r.outcome]}${delta} — ${r.observations}`
-    })
-    .join('\n')
-}
-
 /**
  * Meta-review agent. Synthesises recurring critique patterns into feedback
  * appended to other agents' prompts (improvement without backprop), and at the
@@ -66,14 +47,18 @@ export class MetaReviewAgent {
   /** Build a meta-review from the campaign state without persisting it. */
   async generate(campaign: Campaign, cycle: number): Promise<MetaReview> {
     const snapshot = this.ctx.store.getSnapshot(campaign.id)
-    const designs = (snapshot?.designs ?? []).filter((d) => d.status !== 'rejected')
-    const top = [...designs].sort(compareDesigns).slice(0, 8)
+    const designs = (snapshot?.designs ?? []).filter((d) => inEngineeringScope(campaign, d))
+    const ids = new Set(designs.map((d) => d.id))
+    const top = designs.filter((d) => d.status !== 'rejected').sort(compareDesigns).slice(0, 8)
     const reviewExcerpts = (snapshot?.reviews ?? [])
+      .filter((r) => ids.has(r.designId))
       .slice(-30)
       .map((r) => `[${r.type}/${r.verdict}] ${r.narrative}`)
-    const matchPatterns = (snapshot?.matches ?? []).slice(-30).map((m) => m.rationale)
-    const resultsSummary = summarizeResults(snapshot?.results ?? [], designs)
-    const calNote = calibrationNote(this.ctx.store.latestCalibration(campaign.id))
+    const matchPatterns = (snapshot?.matches ?? [])
+      .filter((m) => ids.has(m.designAId) && ids.has(m.designBId)).slice(-30).map((m) => m.rationale)
+    const results = (snapshot?.results ?? []).filter((r) => r.status === 'recorded' && ids.has(r.designId))
+    const resultsSummary = resultsToText(results.slice(-20), designs)
+    const calNote = calibrationNote(computeCalibration(campaign.id, cycle, Date.now(), designs, results) ?? undefined)
     return this.llm(campaign, cycle, top, reviewExcerpts, matchPatterns, calNote, resultsSummary)
   }
 
@@ -164,6 +149,7 @@ export class MetaReviewAgent {
     return {
       id: this.ctx.newId(),
       campaignId: campaign.id,
+      engineeringScopeId: engineeringScopeId(campaign),
       cycle,
       createdAt: Date.now(),
       critiquePatterns: Array.isArray(data.critiquePatterns)

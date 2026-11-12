@@ -1048,15 +1048,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 .welcome { padding: 32px 16px; max-width: 800px; }
 .welcome h1 { font-size: 42px; line-height: 1.2; letter-spacing: -1.1px; }
 .welcome p { font-size: 16px; line-height: 1.8; color: var(--text-muted); max-width: 650px; margin: 24px 0; }
-.workflow-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.workflow-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
 .workflow-grid .card { padding: 26px; }
 .workflow-grid p { line-height: 1.7; }
-.step-number { display: block; color: var(--accent); font: 20px var(--font-mono); margin-bottom: 20px; }
 .workflow-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-surface); }
 .workflow-step { border: 0; border-right: 1px solid var(--border); background: transparent; padding: 18px 16px; text-align: left; display: flex; gap: 12px; color: var(--text); cursor: pointer; }
 .workflow-step:last-child { border-right: 0; }
 .workflow-step:hover { background: var(--bg-hover); }
-.workflow-step > span { font: 12px var(--font-mono); color: var(--accent-strong); padding-top: 3px; }
 .workflow-step b { display: block; font-size: 13px; }
 .workflow-step small { display: block; font-size: 12px; color: var(--text-muted); margin-top: 7px; line-height: 1.4; }
 .next-action { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 24px 28px; border: 1px solid var(--accent-dim); border-left: 4px solid var(--accent); border-radius: 8px; background: var(--accent-wash); }
@@ -1072,7 +1070,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 .candidate-card:hover { border-color: var(--accent-dim); background: var(--bg-hover); }
 .candidate-card p { color: var(--text-muted); line-height: 1.65; margin: 12px 0; }
 .candidate-card b { font-size: 15px; line-height: 1.5; }
-.candidate-index { font: 12px var(--font-mono); color: var(--accent-strong); align-self: flex-start; padding-top: 4px; }
 .prediction-text { color: var(--text); line-height: 1.6; font-size: 13px; margin: 10px 0 5px; }
 .brief-facts { margin: 20px 0 0; }
 .brief-facts > div { padding: 11px 0; border-top: 1px solid var(--border-subtle); }
@@ -1081,7 +1078,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px
 .evidence-total { font: 36px var(--font-sans); margin-top: 20px; color: var(--accent-strong); }
 .evidence-total span { font-size: 13px; color: var(--text-muted); }
 .workbench .card > p { line-height: 1.7; }
-.strategy-toolbar { display: flex; gap: 12px; }
+.strategy-toolbar { display: flex; flex-wrap: wrap; gap: 12px; }
 .strategy-toolbar input { flex: 1; min-width: 100px; }
 .strategy-toolbar select { width: 260px; }
 .table-scroll { overflow-x: auto; }
@@ -1150,3 +1147,35 @@ input, select, textarea { font-size: 14px; }
   .strategy-toolbar { flex-wrap: wrap; }
   .strategy-toolbar select { width: 100%; }
 }
+
+/* ---------- Engineering plan ---------- */
+.planning-hosts, .pathway-metrics {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  align-items: start;
+}
+.planning-hosts:not(:empty) { margin-top: 16px; }
+.engineering-planning form { margin-top: 18px; }
+.engineering-planning fieldset { min-width: 0; }
+.engineering-planning legend { padding: 0 6px; color: var(--text-muted); }
+.engineering-planning details > summary { cursor: pointer; }
+.engineering-planning p { overflow-wrap: anywhere; }
+.pathway-table { min-width: 790px; }
+.pathway-table tbody th {
+  min-width: 230px;
+  width: 36%;
+  position: static;
+  background: transparent;
+  border-color: var(--border-subtle);
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.pathway-table tbody td { min-width: 135px; }
+.pathway-table :is(th, td) { vertical-align: top; }
+.pathway-table h3 { margin: 0 0 8px; }
+.pathway-table .badge { width: fit-content; white-space: normal; }
+.pathway-selected { background: var(--accent-wash); }
