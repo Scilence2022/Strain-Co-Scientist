@@ -1,4 +1,5 @@
 import type { Campaign, StrainDesign } from '@shared/domain'
+import { effectiveHost, formatHost, inEngineeringScope } from '@shared/engineering'
 import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { generationPrompt, SYSTEM_PREAMBLE, type GenerationStrategy } from '../prompts'
@@ -20,14 +21,14 @@ export class GenerationAgent {
     metaFeedback?: string,
     empiricalPriors?: string
   ): Promise<StrainDesign[]> {
-    const existingTitles = this.ctx.store.getDesigns(campaign.id).map((d) => d.title)
+    const existingTitles = this.ctx.store.getDesigns(campaign.id).filter((d) => inEngineeringScope(campaign, d)).map((d) => d.title)
 
     // Literature grounding (best-effort).
     let literature: string | undefined
     if (strategy === 'literature' && this.ctx.deepResearch.available) {
       const finding = await this.ctx.deepResearch.search([
         {
-          query: `metabolic engineering strategies to ${campaign.objective} ${campaign.productTarget} in ${campaign.host.preset}`,
+          query: `metabolic engineering strategies to ${campaign.objective} ${campaign.productTarget} in ${formatHost(effectiveHost(campaign))}`,
           researchGoal: campaign.goal
         }
       ])

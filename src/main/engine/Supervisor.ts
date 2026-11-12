@@ -2,14 +2,14 @@ import type {
   Campaign,
   DesignStatus,
   EvolutionStrategy,
-  ExperimentalResult,
   StrainDesign,
   SystemStatistics,
   AgentRole,
   ReviewType,
   TournamentConfig
 } from '@shared/domain'
-import { compareDesigns, DEFAULT_TOURNAMENT_CONFIG, RESULT_OUTCOME_LABELS } from '@shared/domain'
+import { compareDesigns, DEFAULT_TOURNAMENT_CONFIG } from '@shared/domain'
+import { engineeringScopeId, inEngineeringScope } from '@shared/engineering'
 import type { EngineContext } from './context'
 import { TaskQueue, type AgentTask } from './TaskQueue'
 import { GenerationAgent } from './agents/GenerationAgent'
@@ -18,8 +18,8 @@ import { RankingAgent } from './agents/RankingAgent'
 import { ProximityAgent } from './agents/ProximityAgent'
 import { EvolutionAgent } from './agents/EvolutionAgent'
 import { MetaReviewAgent } from './agents/MetaReviewAgent'
-import { parseGoalPrompt, SYSTEM_PREAMBLE, type GenerationStrategy } from './prompts'
-import { calibrationNote } from './learn/Calibration'
+import { parseGoalPrompt, resultsToText, SYSTEM_PREAMBLE, type GenerationStrategy } from './prompts'
+import { calibrationNote, computeCalibration, resultFingerprint } from './learn/Calibration'
 import { parseJsonLoose } from '../llm'
 
 const GEN_STRATEGIES: GenerationStrategy[] = ['literature', 'debate', 'assumptions', 'expansion']
@@ -47,7 +47,8 @@ export class Supervisor {
   private evolution: EvolutionAgent
   private metaReview: MetaReviewAgent
   private queue: TaskQueue
-  private bestEloByCycle: number[] = []
+  private scopeEloHistory: number[] = []
+  private scopeCycleOffset = 0
   private abortController = new AbortController()
 
   constructor(
@@ -126,13 +127,15 @@ export class Supervisor {
     const campaign = this.campaign
     if (!campaign) return 'stopped'
 
-    for (const stats of this.ctx.store.getSnapshot(campaign.id)?.statistics ?? []) {
-      this.bestEloByCycle[stats.cycle] = stats.bestElo
-    }
+    const history = this.ctx.store.getSnapshot(campaign.id)?.statistics ?? []
+    const scopeHistory = history.filter((stats) => stats.engineeringScopeId === engineeringScopeId(campaign))
+    const lastCycle = history.at(-1)?.cycle ?? 0
+    this.scopeCycleOffset = scopeHistory.length - lastCycle
+    this.scopeEloHistory = scopeHistory.map((stats) => stats.bestElo)
 
     if (!campaign.researchPlan) await this.parseGoal(campaign)
 
-    let cycle = this.lastCycle()
+    let cycle = lastCycle
     while (true) {
       const current = this.campaign
       if (!current || current.status === 'stopped') return 'stopped'
@@ -173,17 +176,17 @@ export class Supervisor {
     }
   }
 
-  private lastCycle(): number {
-    const stats = this.ctx.store.getSnapshot(this.campaignId)?.statistics ?? []
-    return stats.length ? stats[stats.length - 1].cycle : 0
+  private scopedDesigns(campaign: Campaign): StrainDesign[] {
+    return this.ctx.store.getDesigns(campaign.id).filter((d) => inEngineeringScope(campaign, d))
   }
 
   // -- Per-cycle planning ---------------------------------------------------
 
   private async planCycle(campaign: Campaign, cycle: number): Promise<AgentTask[]> {
     const tasks: AgentTask[] = []
-    const designs = this.ctx.store.getDesigns(campaign.id)
-    const feedback = this.metaFeedback()
+    const designs = this.scopedDesigns(campaign)
+    const feedback = this.metaFeedback(campaign)
+    const scopeCycle = cycle + this.scopeCycleOffset
     const priors = this.empiricalPriors(campaign)
 
     const drafts = designs.filter((d) => d.status === 'draft')
@@ -198,7 +201,7 @@ export class Supervisor {
         label: `Seed generation (${n} designs)`,
         cycle,
         run: async () => {
-          const created = await this.generation.generate(campaign, 'literature', n, cycle, feedback?.generation)
+          const created = await this.generation.generate(campaign, 'literature', n, cycle, feedback?.generation, priors)
           return created.map((d) => d.id)
         }
       })
@@ -210,41 +213,34 @@ export class Supervisor {
       tasks.push(this.reviewTask(campaign, d, 'initial', cycle, feedback?.reflection))
     }
 
-    // 2) Deeper reviews for a rotating subset of active designs.
-    const needsFull = active.filter((d) => d.reviewCount < 2).slice(0, 3)
+    // 2) Prioritize evidence review when observations have changed.
+    const needCalibration = this.designsNeedingCalibration(campaign).sort(compareDesigns).slice(0, 3)
+    const calibrationIds = new Set(needCalibration.map((d) => d.id))
+    const standardReview = active.filter((d) => !calibrationIds.has(d.id))
+    const needsFull = standardReview.filter((d) => d.reviewCount < 2).slice(0, 3)
     for (const d of needsFull) {
       tasks.push(this.reviewTask(campaign, d, 'full', cycle, feedback?.reflection))
     }
-    if (cycle % 3 === 0) {
-      const top = [...active].sort(compareDesigns).slice(0, 2)
+    if (scopeCycle % 3 === 0) {
+      const top = [...standardReview].sort(compareDesigns).slice(0, 2)
       for (const d of top) {
         const types: ReviewType[] = ['deep-verification', 'simulation']
-        tasks.push(this.reviewTask(campaign, d, types[cycle % 2], cycle, feedback?.reflection))
+        tasks.push(this.reviewTask(campaign, d, types[scopeCycle % 2], cycle, feedback?.reflection))
       }
     }
 
     // 2b) Calibration reviews + empirical refinement for designs with new wet-lab
     // data — this is the "Learn" step that closes the DBTL loop.
-    const needCalibration = this.designsNeedingCalibration(campaign).slice(0, 3)
     for (const d of needCalibration) {
       tasks.push(this.reviewTask(campaign, d, 'calibration', cycle, feedback?.reflection))
-    }
-    const measured = this.designsWithResults(campaign)
-    if (measured.length) {
-      // Refine the best empirically-graded measured design from what the lab saw.
-      const parent = [...measured].sort(compareDesigns)[0]
+      if (!this.ctx.store.getResultsForDesign(campaign.id, d.id).some((r) => r.status === 'recorded')) continue
       tasks.push({
         agent: 'evolution',
-        label: `Empirical refinement of ${truncate(parent.title)}`,
+        label: `Empirical refinement of ${truncate(d.title)}`,
         cycle,
         run: async () => {
           const child = await this.evolution.evolve(
-            campaign,
-            [parent],
-            'empirical-refinement',
-            cycle,
-            feedback?.evolution,
-            priors
+            campaign, [d], 'empirical-refinement', cycle, feedback?.evolution, priors
           )
           return child ? [child.id] : []
         }
@@ -265,7 +261,7 @@ export class Supervisor {
     }
 
     // 4) Proximity recluster every 2 cycles.
-    if (active.length >= 2 && cycle % 2 === 0) {
+    if (active.length >= 2 && scopeCycle % 2 === 0) {
       tasks.push({
         agent: 'proximity',
         label: 'Recompute proximity graph',
@@ -277,11 +273,11 @@ export class Supervisor {
     }
 
     // 5) Evolution of top designs (adaptive: bias toward evolution if it wins).
-    if (active.length >= 2 && cycle % 2 === 0) {
+    if (active.length >= 2 && scopeCycle % 2 === 0) {
       const evoCount = this.evolutionWinRate(active) >= this.generationWinRate(active) ? 2 : 1
       const top = [...active].sort(compareDesigns)
       for (let i = 0; i < evoCount; i++) {
-        const strat = EVO_STRATEGIES[(cycle + i) % EVO_STRATEGIES.length]
+        const strat = EVO_STRATEGIES[(scopeCycle + i) % EVO_STRATEGIES.length]
         const parents =
           strat === 'combination' && top.length >= 2 ? [top[0], top[1]] : [top[i % top.length]]
         tasks.push({
@@ -304,8 +300,8 @@ export class Supervisor {
     }
 
     // 6) Generation expansion if under the design budget.
-    if (nonRejected.length < campaign.computeBudget.targetDesigns && cycle % 3 === 0) {
-      const strat = GEN_STRATEGIES[cycle % GEN_STRATEGIES.length]
+    if (nonRejected.length < campaign.computeBudget.targetDesigns && scopeCycle % 3 === 0) {
+      const strat = GEN_STRATEGIES[scopeCycle % GEN_STRATEGIES.length]
       tasks.push({
         agent: 'generation',
         label: `Expand design space (${strat})`,
@@ -341,7 +337,7 @@ export class Supervisor {
     }
 
     // 8) Meta-review every 4 cycles.
-    if (cycle % 4 === 0 && active.length >= 2) {
+    if (scopeCycle % 4 === 0 && active.length >= 2) {
       tasks.push({
         agent: 'meta-review',
         label: 'Synthesise meta-review feedback',
@@ -450,61 +446,32 @@ export class Supervisor {
 
   // -- Statistics & termination --------------------------------------------
 
-  private metaFeedback(): Partial<Record<AgentRole, string>> | undefined {
-    return this.ctx.store.latestMetaReview(this.campaignId)?.agentFeedback
+  private metaFeedback(campaign: Campaign): Partial<Record<AgentRole, string>> | undefined {
+    const history = this.ctx.store.getSnapshot(campaign.id)?.metaReviews ?? []
+    return history.filter((meta) => meta.engineeringScopeId === engineeringScopeId(campaign)).at(-1)?.agentFeedback
   }
 
-  /** Non-rejected designs that carry at least one authoritative (recorded) result. */
-  private designsWithResults(campaign: Campaign): StrainDesign[] {
-    return this.ctx.store
-      .getDesigns(campaign.id)
-      .filter((d) => d.status !== 'rejected')
-      .filter((d) =>
-        this.ctx.store.getResultsForDesign(campaign.id, d.id).some((r) => r.status === 'recorded')
-      )
-  }
-
-  /** Designs whose newest recorded result is newer than their newest calibration review. */
   private designsNeedingCalibration(campaign: Campaign): StrainDesign[] {
-    const snap = this.ctx.store.getSnapshot(campaign.id)
-    const latestResultAt = new Map<string, number>()
-    for (const r of snap?.results ?? []) {
-      if (r.status !== 'recorded') continue
-      latestResultAt.set(r.designId, Math.max(latestResultAt.get(r.designId) ?? 0, r.updatedAt ?? r.createdAt))
-    }
-    const latestCalAt = new Map<string, number>()
-    for (const rv of snap?.reviews ?? []) {
-      if (rv.type !== 'calibration') continue
-      latestCalAt.set(rv.designId, Math.max(latestCalAt.get(rv.designId) ?? 0, rv.createdAt))
-    }
-    return this.ctx.store.getDesigns(campaign.id).filter((d) => {
-      if (d.status === 'rejected') return false
-      const ra = latestResultAt.get(d.id)
-      return ra !== undefined && ra > (latestCalAt.get(d.id) ?? 0)
+    const snapshot = this.ctx.store.getSnapshot(campaign.id)
+    const reviews = new Map(
+      (snapshot?.reviews ?? []).filter((review) => review.type === 'calibration').map((review) => [review.designId, review])
+    )
+    return this.scopedDesigns(campaign).filter((design) => {
+      if (design.status === 'rejected') return false
+      const results = this.ctx.store.getResultsForDesign(campaign.id, design.id)
+      const review = reviews.get(design.id)
+      if (review?.resultFingerprint !== undefined) return review.resultFingerprint !== resultFingerprint(results)
+      return results.some((r) => r.status === 'recorded' && (r.updatedAt ?? r.createdAt) > (review?.createdAt ?? 0))
     })
   }
 
-  /**
-   * Campaign-level empirical priors built from recorded wet-lab results +
-   * calibration: what to amplify, what to avoid, and where predictions are
-   * biased. Injected into Generation/Evolution prompts. Undefined when there's
-   * no measured data yet.
-   */
   private empiricalPriors(campaign: Campaign): string | undefined {
-    const results = this.ctx.store.getResults(campaign.id).filter((r) => r.status === 'recorded')
+    const designs = this.scopedDesigns(campaign)
+    const ids = new Set(designs.map((d) => d.id))
+    const results = this.ctx.store.getResults(campaign.id).filter((r) => r.status === 'recorded' && ids.has(r.designId))
     if (!results.length) return undefined
-    const designs = this.ctx.store.getDesigns(campaign.id)
-    const titleOf = (id: string): string => designs.find((d) => d.id === id)?.title ?? 'design'
-    const line = (r: ExperimentalResult): string =>
-      `  - ${titleOf(r.designId)}: ${RESULT_OUTCOME_LABELS[r.outcome]} — ${r.observations}`
-    const validated = results.filter((r) => r.outcome === 'confirmed' || r.outcome === 'partial')
-    const failed = results.filter((r) => r.outcome === 'refuted' || r.outcome === 'build-failed')
-    const lines: string[] = []
-    if (validated.length) lines.push('Validated (amplify these mechanisms):', ...validated.slice(-8).map(line))
-    if (failed.length) lines.push('Failed / avoid (do not repeat):', ...failed.slice(-8).map(line))
-    const note = calibrationNote(this.ctx.store.latestCalibration(campaign.id))
-    if (note) lines.push(`Calibration: ${note}`)
-    return lines.length ? lines.join('\n') : undefined
+    const note = calibrationNote(computeCalibration(campaign.id, 0, Date.now(), designs, results) ?? undefined)
+    return [resultsToText(results.slice(-20), designs), note ? `Calibration: ${note}` : ''].filter(Boolean).join('\n')
   }
 
   private winRateForOrigin(active: StrainDesign[], origin: StrainDesign['origin']): number {
@@ -523,7 +490,7 @@ export class Supervisor {
   }
 
   private recordStatistics(campaign: Campaign, cycle: number): SystemStatistics {
-    const designs = this.ctx.store.getDesigns(campaign.id)
+    const designs = this.scopedDesigns(campaign)
     const snapshot = this.ctx.store.getSnapshot(campaign.id)
     const active = designs.filter((d) => d.status === 'active' || d.status === 'flagged')
     const sortedElo = [...active].sort((a, b) => b.elo - a.elo)
@@ -546,10 +513,11 @@ export class Supervisor {
     const agentWeights: Partial<Record<AgentRole, number>> = {}
     for (const t of tasks) agentWeights[t.agent] = (agentWeights[t.agent] ?? 0) + 1
 
-    this.bestEloByCycle[cycle] = bestElo
+    this.scopeEloHistory[cycle + this.scopeCycleOffset - 1] = bestElo
 
     const stats: SystemStatistics = {
       campaignId: campaign.id,
+      engineeringScopeId: engineeringScopeId(campaign),
       cycle,
       at: Date.now(),
       designsTotal: designs.length,
@@ -569,25 +537,25 @@ export class Supervisor {
   }
 
   private terminalProgress(campaign: Campaign, cycle: number): number {
-    const cycleP = cycle / campaign.computeBudget.maxCycles
-    const designs = this.ctx.store.getDesigns(campaign.id).filter((d) => d.status !== 'rejected')
+    const cycleP = (cycle + this.scopeCycleOffset) / campaign.computeBudget.maxCycles
+    const designs = this.scopedDesigns(campaign).filter((d) => d.status !== 'rejected')
     const designP = designs.length / campaign.computeBudget.targetDesigns
     return Math.min(1, Math.max(cycleP, designP * 0.9))
   }
 
   private isTerminal(campaign: Campaign, cycle: number): boolean {
-    if (cycle >= campaign.computeBudget.maxCycles) return true
+    if (cycle + this.scopeCycleOffset >= campaign.computeBudget.maxCycles) return true
     // Never terminate while there is wet-lab data the agents haven't learned from
     // yet — a result that just arrived must drive at least one calibration cycle.
     if (this.designsNeedingCalibration(campaign).length > 0) return false
-    const designs = this.ctx.store.getDesigns(campaign.id)
+    const designs = this.scopedDesigns(campaign)
     const nonRejected = designs.filter((d) => d.status !== 'rejected')
     const active = designs.filter((d) => d.status === 'active' || d.status === 'flagged')
     const drafts = designs.filter((d) => d.status === 'draft')
 
     // Reached the design budget and Elo has plateaued, with no pending drafts.
     if (nonRejected.length >= campaign.computeBudget.targetDesigns && drafts.length === 0 && active.length >= 2) {
-      const recent = this.bestEloByCycle.slice(Math.max(0, cycle - 3), cycle + 1).filter((x) => x != null)
+      const recent = this.scopeEloHistory.slice(-4)
       if (recent.length >= 3) {
         const spread = Math.max(...recent) - Math.min(...recent)
         if (spread < 12) return true
@@ -598,7 +566,7 @@ export class Supervisor {
 
   private async finalize(campaign: Campaign, cycle: number): Promise<void> {
     // Always produce a final meta-review / research overview.
-    const active = this.ctx.store.getDesigns(campaign.id).filter((d) => d.status !== 'rejected')
+    const active = this.scopedDesigns(campaign).filter((d) => d.status !== 'rejected')
     if (active.length >= 1) {
       try {
         await this.metaReview.synthesize(campaign, cycle)

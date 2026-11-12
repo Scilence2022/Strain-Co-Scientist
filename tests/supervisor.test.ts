@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { campaign, deferred, design } from './fixtures'
+import { engineeringScope, hostKey } from '../src/shared/engineering'
 import { DEFAULT_SETTINGS } from '../src/shared/domain'
 import type { LLMRequest, LLMResponse } from '../src/main/llm/types'
 
@@ -74,4 +75,61 @@ describe('supervisor orchestration', () => {
     await supervisor.run()
     expect(store.getSnapshot(c.id)?.matches).toHaveLength(1)
   })
+  it('seeds and reviews a new pathway within its own cycle budget', async () => {
+    const complete = vi.fn(async (req: LLMRequest) => {
+      if (req.agent === 'generation') return response('[{"title":"New route design","chassis":"S. cerevisiae","metabolicTargets":[{"name":"Named target","category":"precursor-supply","hypothesis":"Causal hypothesis","readout":"Matched comparison","limitation":"Unverified"}]}]')
+      if (req.agent === 'reflection') return response('{"verdict":"pass","scores":{"safety":9}}')
+      return response('{"overview":{"summary":"New route overview","areas":[]}}')
+    })
+    const { supervisor, store, campaign: c } = await setup(complete)
+    c.host = { preset: 'scerevisiae' }
+    c.computeBudget.maxCycles = 2
+    c.engineering = {
+      hosts: [],
+      selectedPathwayId: 'new-route',
+      pathways: [{ id: 'new-route', hostKey: hostKey(c.host), source: 'scientist', title: 'Candidate pathway',
+        evidence: 'hypothetical', summary: 'Route concept', limitations: 'Unknown' }]
+    }
+    store.upsertDesign(design('earlier'))
+    store.addStatistics({ campaignId: c.id, cycle: 5, bestElo: 1200 } as never)
+    await supervisor.run()
+    const snap = store.getSnapshot(c.id)!
+    const generated = snap.designs.find((entry) => entry.title === 'New route design')
+    expect(generated).toMatchObject({ status: 'active', engineeringScope: { id: 'new-route' } })
+    expect(generated?.metabolicTargets?.[0].name).toBe('Named target')
+    expect(snap.statistics.slice(-2).map((stats) => [stats.cycle, stats.engineeringScopeId]))
+      .toEqual([[6, 'new-route'], [7, 'new-route']])
+    const generation = complete.mock.calls.find(([req]) => req.agent === 'generation')?.[0].prompt
+    expect(generation).toContain('Scientist-selected pathway: Candidate pathway')
+    expect(generation).not.toContain('earlier')
+  })
+
+  it('feeds target observations into review and evolution without rejecting the entire design', async () => {
+    const complete = vi.fn(async (req: LLMRequest) => {
+      if (req.agent === 'reflection') return response('{"verdict":"reject","scores":{"safety":9}}')
+      if (req.agent === 'evolution') return response('{"title":"Follow-up design"}')
+      return response('{"overview":{"summary":"Summary","areas":[]}}')
+    })
+    const { supervisor, store, campaign: c } = await setup(complete)
+    c.computeBudget.maxCycles = 1
+    const d = design('parent')
+    d.reviewCount = 2
+    d.engineeringScope = engineeringScope(c)
+    d.metabolicTargets = [{ id: 'target1', name: 'Specific target', category: 'precursor-supply',
+      hypothesis: 'Causal hypothesis', readout: 'Matched comparison', limitation: 'Unverified' }]
+    store.upsertDesign(d)
+    store.addResult({ id: 'result1', campaignId: c.id, designId: d.id, targetId: 'target1', createdAt: 2,
+      outcome: 'refuted', status: 'recorded', author: 'Scientist', observations: 'Named observation', conditions: 'Matched batch' })
+    await supervisor.run()
+    const snap = store.getSnapshot(c.id)!
+    expect(snap.designs.find((entry) => entry.id === d.id)?.status).toBe('active')
+    expect(snap.reviews.find((review) => review.type === 'calibration')?.resultFingerprint).toBeTruthy()
+    for (const agent of ['reflection', 'evolution']) {
+      const prompt = complete.mock.calls.find(([req]) => req.agent === agent)?.[0].prompt
+      expect(prompt).toContain('Target: Specific target (Precursor supply)')
+      expect(prompt).toContain('Named observation')
+      expect(prompt).toContain('Matched batch')
+    }
+  })
+
 })

@@ -1,4 +1,8 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
+import {
+  COFACTORS, effectiveHost, engineeringScope, formatHost, METABOLIC_TARGET_CATEGORIES, METABOLIC_TARGET_LABELS,
+  type MetabolicTargetDraft
+} from '@shared/engineering'
 import { useStore } from '../store/useStore'
 import { DesignStatusBadge, Empty, EvidenceBadge } from '../components/ui'
 import { RecordResultForm } from '../components/Results'
@@ -16,6 +20,8 @@ export function ExpertView(): JSX.Element {
   const { snapshot, refreshSnapshot } = useStore()
   if (!snapshot) return <div className="page"><Empty icon={<IconExpert size={36} />} title="No campaign selected" /></div>
   const campaign = snapshot.campaign
+  const scope = engineeringScope(campaign)
+  const chassisDefault = formatHost(effectiveHost(campaign))
   const active = snapshot.designs.filter((d) => d.status === 'active' || d.status === 'flagged')
   const flagged = snapshot.designs.filter((d) => d.status === 'flagged')
   const terminal =
@@ -31,7 +37,8 @@ export function ExpertView(): JSX.Element {
       </div>
 
       <RefineGoal campaignId={campaign.id} current={campaign.goal} onDone={refreshSnapshot} />
-      <ContributeDesign campaignId={campaign.id} chassisDefault={snapshot.designs[0]?.chassis ?? ''} onDone={refreshSnapshot} />
+      <ContributeDesign key={scope?.id ?? 'project'} campaignId={campaign.id}
+        chassisDefault={chassisDefault} fixedHost={!!scope} onDone={refreshSnapshot} />
       <ProvideReview onDone={refreshSnapshot} />
       <RecordResult campaignId={campaign.id} onDone={refreshSnapshot} terminal={terminal} />
 
@@ -40,7 +47,7 @@ export function ExpertView(): JSX.Element {
           <div className="card-title">Lab shortlist ({flagged.length})</div>
         </div>
         {flagged.length === 0 ? (
-          <span className="faint">No candidates shortlisted. Compare designs in Design strategies and choose candidates for your lab.</span>
+          <span className="faint">No candidates shortlisted. Compare designs in Metabolic targets and choose candidates for your lab.</span>
         ) : (
           <div className="col gap-sm">
             {flagged.map((d) => (
@@ -188,7 +195,7 @@ function RecordResult({
         </select>
       </div>
       {selected ? (
-        <RecordResultForm campaignId={campaignId} designId={selected.id} onDone={onDone} />
+        <RecordResultForm key={selected.id} campaignId={campaignId} designId={selected.id} onDone={onDone} />
       ) : (
         <span className="faint">Pick a design to record a result against.</span>
       )}
@@ -201,10 +208,12 @@ const IV_TYPES = Object.keys(INTERVENTION_LABELS) as InterventionType[]
 function ContributeDesign({
   campaignId,
   chassisDefault,
+  fixedHost,
   onDone
 }: {
   campaignId: string
   chassisDefault: string
+  fixedHost: boolean
   onDone: () => void
 }): JSX.Element {
   const [title, setTitle] = useState('')
@@ -216,29 +225,37 @@ function ContributeDesign({
     { type: 'knockout', targets: [], details: '' }
   ])
   const [busy, setBusy] = useState(false)
-
-  const valid = title.trim() && summary.trim()
+  const [error, setError] = useState('')
+  const [target, setTarget] = useState<MetabolicTargetDraft>()
+  const targetValid = !target || [target.name, target.hypothesis, target.readout, target.limitation].every((s) => s.trim())
+  const valid = title.trim() && summary.trim() && targetValid
 
   const submit = async () => {
     setBusy(true)
-    await window.api.submitExpertDesign({
-      campaignId,
-      title: title.trim(),
-      summary: summary.trim(),
-      chassis: chassis.trim(),
-      mechanism: mechanism.trim(),
-      predictedEffect: predictedEffect.trim(),
-      interventions: interventions
-        .filter((iv) => iv.details.trim() || iv.targets.length)
-        .map((iv) => ({ ...iv, targets: iv.targets }))
-    })
-    setTitle('')
-    setSummary('')
-    setMechanism('')
-    setPredictedEffect('')
-    setInterventions([{ type: 'knockout', targets: [], details: '' }])
-    setBusy(false)
-    onDone()
+    setError('')
+    try {
+      await window.api.submitExpertDesign({
+        campaignId,
+        title: title.trim(),
+        summary: summary.trim(),
+        chassis: chassis.trim(),
+        mechanism: mechanism.trim(),
+        predictedEffect: predictedEffect.trim(),
+        interventions: interventions.filter((iv) => iv.details.trim() || iv.targets.length),
+        metabolicTargets: target ? [target] : undefined
+      })
+      setTitle('')
+      setSummary('')
+      setMechanism('')
+      setPredictedEffect('')
+      setInterventions([{ type: 'knockout', targets: [], details: '' }])
+      setTarget(undefined)
+      onDone()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -258,7 +275,7 @@ function ContributeDesign({
       <div className="grid grid-2">
         <div className="field">
           <label>Chassis</label>
-          <input value={chassis} onChange={(e) => setChassis(e.target.value)} />
+          <input value={chassis} readOnly={fixedHost} onChange={(e) => setChassis(e.target.value)} />
         </div>
       </div>
 
@@ -310,13 +327,65 @@ function ContributeDesign({
         <label>Predicted effect</label>
         <textarea rows={2} value={predictedEffect} onChange={(e) => setPredictedEffect(e.target.value)} />
       </div>
+      {target ? (
+        <TargetEditor target={target} onChange={setTarget} onRemove={() => setTarget(undefined)} />
+      ) : (
+        <button className="btn btn-sm" onClick={() =>
+          setTarget({ name: '', category: 'rate-limiting-step', hypothesis: '', readout: '', limitation: '' })
+        }>Add target hypothesis</button>
+      )}
+      {error && <p className="form-error" role="alert">{error}</p>}
       <div className="row">
         <span className="spacer" />
         <button className="btn btn-primary btn-sm" disabled={!valid || busy} onClick={submit}>
-          Add to tournament
+          Save design
         </button>
       </div>
     </div>
+  )
+}
+
+function TargetEditor({ target, onChange, onRemove }: {
+  target: MetabolicTargetDraft; onChange: (target: MetabolicTargetDraft) => void; onRemove: () => void
+}): JSX.Element {
+  const id = useId()
+  return (
+    <fieldset className="card col gap-sm">
+      <legend>Target hypothesis</legend>
+      <div className="field">
+        <label htmlFor={`${id}-category`}>Target category</label>
+        <select id={`${id}-category`} value={target.category} onChange={(e) =>
+          onChange({ ...target, category: e.target.value as MetabolicTargetDraft['category'] })
+        }>
+          {METABOLIC_TARGET_CATEGORIES.map((category) =>
+            <option key={category} value={category}>{METABOLIC_TARGET_LABELS[category]}</option>
+          )}
+        </select>
+      </div>
+      {([
+        ['name', 'Target name'],
+        ['hypothesis', 'Expected causal effect'],
+        ['readout', 'Measurement and control'],
+        ['limitation', 'Principal uncertainty']
+      ] as const).map(([field, label]) => (
+        <div className="field" key={field}>
+          <label htmlFor={`${id}-${field}`}>{label}</label>
+          <input id={`${id}-${field}`} value={target[field]} onChange={(e) => onChange({ ...target, [field]: e.target.value })} />
+        </div>
+      ))}
+      <div className="row wrap gap-sm" aria-label="Relevant cofactors">
+        {COFACTORS.map((cofactor) => (
+          <label className="checkbox-row" key={cofactor}>
+            <input type="checkbox" checked={target.cofactors?.includes(cofactor) ?? false} onChange={(e) => {
+              const current = target.cofactors ?? []
+              onChange({ ...target, cofactors: e.target.checked ? [...current, cofactor] : current.filter((c) => c !== cofactor) })
+            }} />
+            {cofactor}
+          </label>
+        ))}
+      </div>
+      <div><button className="btn btn-sm btn-ghost" onClick={onRemove}>Remove hypothesis</button></div>
+    </fieldset>
   )
 }
 

@@ -11,6 +11,8 @@ import {
   resultsCsv
 } from '../src/shared/workbench'
 import { campaignInputSchema, ipcArguments } from '../src/shared/validation'
+import { pathwayLeaders, type PathwayOption } from '../src/shared/engineering'
+import { suggestEngineeringOptions } from '../src/main/engine/EngineeringPlanning'
 import { goalContext, generationPrompt, resultsToText } from '../src/main/engine/prompts'
 
 const result = (
@@ -150,5 +152,71 @@ describe('scientist workbench', () => {
     expect(csv).toContain('"\'@batch"')
     expect(csv).toContain('"-2","0"')
     expect(csv).toContain('"A, B"')
+  })
+})
+
+describe('engineering pathway comparison', () => {
+  const a: PathwayOption = {
+    id: 'a', hostKey: 'host', title: 'Route A', source: 'scientist', summary: 'Concept A',
+    limitations: 'Unknown host transfer', evidence: 'hypothetical',
+    timeToValidation: { days: 9, basis: 'Starting from the same strain' },
+    yield: { value: 0.3, unit: 'g/g', basis: 'glucose', kind: 'theoretical' },
+    steps: { count: 4, basis: 'glucose to product, no transport' }
+  }
+  const b: PathwayOption = {
+    ...a, id: 'b', title: 'Route B',
+    timeToValidation: { days: 12, basis: '  starting from  the same strain ' },
+    yield: { value: 0.5, unit: 'g/g', basis: 'glucose', kind: 'theoretical' },
+    steps: { count: 2, basis: 'glucose to product, no transport' }
+  }
+
+  it('highlights a different route for each comparable metric and handles unknown values', () => {
+    const leaders = pathwayLeaders([a, b, { ...a, id: 'c', steps: undefined, yield: undefined, timeToValidation: undefined }])
+    expect([...leaders.time]).toEqual(['a'])
+    expect([...leaders.yield]).toEqual(['b'])
+    expect([...leaders.steps]).toEqual(['b'])
+  })
+
+  it('withholds comparisons across different evidence types, units and reaction boundaries', () => {
+    const incompatible: PathwayOption = {
+      ...b,
+      yield: { ...b.yield!, kind: 'reported' },
+      steps: { count: 1, basis: 'intermediate to product, includes transport' }
+    }
+    const leaders = pathwayLeaders([a, incompatible])
+    expect(leaders.yield.size).toBe(0)
+    expect(leaders.steps.size).toBe(0)
+    expect(pathwayLeaders([a, { ...b, yield: { ...b.yield!, unit: 'mol/mol' } }]).yield.size).toBe(0)
+  })
+
+  it('keeps model suggestions unselected, rejects invalid claims and deduplicates the response', async () => {
+    const c = campaign()
+    c.host = { preset: 'scerevisiae', strainBackground: 'Reference strain' }
+    const valid = { title: 'Hypothetical route', evidence: 'hypothetical', summary: 'Planning description', limitations: 'Unconfirmed' }
+    const mock = {
+      newId: () => 'new-route',
+      llm: {
+        complete: async () => ({
+          text: JSON.stringify([
+            { ...valid, title: 'Uncited report', evidence: 'reported-in-host' },
+            valid, { ...valid, title: 'HYPOTHETICAL ROUTE' }
+          ]),
+          usage: { inputTokens: 1, outputTokens: 1 }, model: 'fixture'
+        }),
+        ping: async () => ''
+      }
+    }
+    const proposal = await suggestEngineeringOptions(mock, c, 'pathways')
+    expect(proposal.pathways).toHaveLength(1)
+    expect(proposal.pathways[0]).toMatchObject({ id: 'new-route', source: 'model', evidence: 'hypothetical' })
+    expect(proposal.selectedPathwayId).toBeUndefined()
+    expect(c.engineering).toBeUndefined()
+  })
+
+  it('treats conflicting feedback as a conflict only within the same scope', () => {
+    const support = { ...result('confirmed'), targetId: 'one' }
+    expect(hasConflictingResults([support, { ...result('refuted'), targetId: 'two' }])).toBe(false)
+    expect(hasConflictingResults([support, { ...result('refuted'), targetId: 'one' }])).toBe(true)
+    expect(hasConflictingResults([support, result('refuted')])).toBe(false)
   })
 })

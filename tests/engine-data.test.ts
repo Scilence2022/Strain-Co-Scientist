@@ -3,7 +3,9 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { snapshot, design } from './fixtures'
-import type { StrainDesign } from '../src/shared/domain'
+import { evidenceGradeFor, type StrainDesign } from '../src/shared/domain'
+import { availablePathways } from '../src/shared/engineering'
+import { experimentBrief, resultsCsv } from '../src/shared/workbench'
 import type { EngineEvent, RecordResultInput } from '../src/shared/ipc'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir() } }))
@@ -85,4 +87,52 @@ describe('campaign data consistency', () => {
     await engine.disputeResult('campaign1', result.id, false)
     expect(engine.getSnapshot('campaign1')!.calibration.at(-1)?.nPairs).toBe(1)
   })
+  it('persists scoped designs and target results across host changes and store reload', async () => {
+    const { engine } = await setup()
+    const campaignId = 'campaign1'
+    await engine.updateEngineeringPlan(campaignId, {
+      action: 'set-host', host: { preset: 'scerevisiae', strainBackground: 'Reference yeast' }
+    })
+    await engine.updateEngineeringPlan(campaignId, {
+      action: 'add-pathway',
+      pathway: { title: 'Candidate route', evidence: 'hypothetical', summary: 'Route concept', limitations: 'Unverified' }
+    })
+    const pathway = availablePathways(engine.getSnapshot(campaignId)!.campaign)[0]
+    await engine.updateEngineeringPlan(campaignId, { action: 'select-pathway', optionId: pathway.id })
+    const scoped = engine.submitExpertDesign({
+      campaignId, title: 'Scoped design', summary: 'Target analysis', chassis: '', interventions: [],
+      mechanism: '', predictedEffect: '',
+      metabolicTargets: [{ name: 'NADPH balance', category: 'redox-balance', cofactors: ['NADPH'],
+        hypothesis: 'Named causal assumption', readout: 'Compare matched controls', limitation: 'Possible batch effects' }]
+    })
+    expect(scoped.engineeringScope?.pathway?.id).toBe(pathway.id)
+    const targetId = scoped.metabolicTargets![0].id
+    const input: RecordResultInput = {
+      campaignId, designId: scoped.id, targetId, metric: 'titer', outcome: 'confirmed',
+      observations: 'Supported by this batch', measuredValue: 2, baselineValue: 1
+    }
+    await expect(engine.recordExperimentalResult({ ...input, designId: 'a' })).rejects.toThrow('does not belong')
+    const recorded = await engine.recordExperimentalResult(input)
+    const snapshot = engine.getSnapshot(campaignId)!
+    expect(snapshot.calibration).toHaveLength(0)
+    expect(evidenceGradeFor(snapshot.results)).toBe('predicted-only')
+    expect(evidenceGradeFor(snapshot.results, targetId)).toBe('measured-confirmed')
+    expect(experimentBrief(snapshot, [scoped])).toContain('Target: NADPH balance')
+    expect(resultsCsv(snapshot)).toContain('Candidate route')
+    await engine.disputeResult(campaignId, recorded.id, true)
+    expect(evidenceGradeFor(engine.getSnapshot(campaignId)!.results, targetId)).toBe('predicted-only')
+    await engine.disputeResult(campaignId, recorded.id, false)
+
+    await engine.updateEngineeringPlan(campaignId, { action: 'set-host', host: { preset: 'cglutamicum' } })
+    await expect(engine.updateEngineeringPlan(campaignId, { action: 'select-pathway', optionId: pathway.id }))
+      .rejects.toThrow('does not belong')
+    const saved = active.at(-1)!
+    await engine.shutdown()
+    const reloaded = saved.engine = new Engine(() => {}, saved.root)
+    const reloadedSnapshot = reloaded.getSnapshot(campaignId)!
+    expect(reloadedSnapshot.campaign.engineering?.selectedPathwayId).toBeUndefined()
+    expect(reloadedSnapshot.designs.find((entry) => entry.id === scoped.id)?.engineeringScope?.pathway?.id).toBe(pathway.id)
+    expect(reloadedSnapshot.results[0]).toMatchObject({ targetId, status: 'recorded' })
+  })
+
 })

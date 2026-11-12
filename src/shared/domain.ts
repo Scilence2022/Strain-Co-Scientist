@@ -1,3 +1,5 @@
+import type { EngineeringPlan, EngineeringScope, MetabolicTarget } from './engineering'
+
 /**
  * Domain model for Strain Co-Scientist.
  *
@@ -206,6 +208,7 @@ export interface Campaign {
 
   /** Scientist-supplied reference conditions; optional for existing campaigns. */
   labContext?: LabContext
+  engineering?: EngineeringPlan
 
   /** Constraints the agents must honour. */
   constraints: {
@@ -410,6 +413,8 @@ export interface StrainDesign {
   chassis: string
 
   interventions: Intervention[]
+  engineeringScope?: EngineeringScope
+  metabolicTargets?: MetabolicTarget[]
   mechanism: string
   /** Qualitative predicted effect on titer/rate/yield + rationale. */
   predictedEffect: string
@@ -465,6 +470,8 @@ export interface ExperimentalResult {
   /** Last dispute/restore time, used to revisit previously learned evidence. */
   updatedAt?: number
   outcome: ResultOutcome
+  /** When present, the conclusion concerns a single hypothesis within the design. */
+  targetId?: string
   /** Which phenotype was measured (for calibration against the prediction). */
   metric?: QuantPrediction['metric']
   /** Measured value and its baseline (same unit) — enables a calibration delta. */
@@ -538,6 +545,8 @@ export const REVIEW_TYPE_LABELS: Record<ReviewType, string> = {
 }
 
 export interface Review {
+  /** Identifies the exact set of result states visible to a calibration review. */
+  resultFingerprint?: string
   id: string
   designId: string
   campaignId: string
@@ -626,6 +635,7 @@ export interface SuggestedExpert {
 }
 
 export interface MetaReview {
+  engineeringScopeId?: string
   id: string
   campaignId: string
   cycle: number
@@ -685,6 +695,7 @@ export interface TaskRecord {
 
 /** Periodic snapshot computed by the Supervisor and written to context memory. */
 export interface SystemStatistics {
+  engineeringScopeId?: string
   campaignId: string
   cycle: number
   at: number
@@ -887,8 +898,8 @@ export interface CampaignSnapshot {
  * `build-failed`/`inconclusive` carry no decisive signal and leave the design at
  * `predicted-only`. Pure: same inputs always yield the same grade.
  */
-export function evidenceGradeFor(results: ExperimentalResult[]): EvidenceGrade {
-  const decisive = results.filter((r) => r.status === 'recorded')
+export function evidenceGradeFor(results: ExperimentalResult[], targetId?: string): EvidenceGrade {
+  const decisive = results.filter((r) => r.status === 'recorded' && r.targetId === targetId)
   if (decisive.some((r) => r.outcome === 'confirmed')) return 'measured-confirmed'
   if (decisive.some((r) => r.outcome === 'partial')) return 'measured-partial'
   if (decisive.some((r) => r.outcome === 'refuted')) return 'measured-refuted'

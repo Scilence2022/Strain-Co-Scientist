@@ -4,6 +4,7 @@ import type { EngineContext } from '../context'
 import { parseJsonLoose } from '../../llm'
 import { reviewPrompt, SYSTEM_PREAMBLE } from '../prompts'
 import { clampScore } from './util'
+import { resultFingerprint } from '../learn/Calibration'
 
 /**
  * Reflection agent — the scientific peer reviewer. Implements the paper's
@@ -68,6 +69,7 @@ export class ReflectionAgent {
     // Ground the review on any wet-lab results for this design — decisive for a
     // calibration review, and useful context for every other mode.
     const results = this.ctx.store.getResultsForDesign(campaign.id, design.id)
+    const fingerprint = type === 'calibration' ? resultFingerprint(results) : undefined
     const prompt = `${reviewPrompt(
       campaign,
       design,
@@ -106,6 +108,7 @@ export class ReflectionAgent {
         designId: design.id,
         campaignId: campaign.id,
         type,
+        resultFingerprint: fingerprint,
         scores,
         verdict: 'reject',
         narrative: `Rejected on safety grounds. ${String(parsed.narrative ?? '')}`,
@@ -120,8 +123,10 @@ export class ReflectionAgent {
       designId: design.id,
       campaignId: campaign.id,
       type,
+      resultFingerprint: fingerprint,
       scores,
-      verdict,
+      verdict: type === 'calibration' && verdict === 'reject' &&
+        !results.some((r) => r.status === 'recorded' && !r.targetId) ? 'revise' : verdict,
       narrative: String(parsed.narrative ?? ''),
       evidence: Array.isArray(parsed.evidence) ? parsed.evidence.map(String) : [],
       author: 'Reflection'

@@ -13,7 +13,9 @@ import {
   EVOLUTION_STRATEGY_LABELS,
   RESULT_OUTCOME_LABELS
 } from '@shared/domain'
-import { HOST_PRESETS, hostDisplayName } from '@shared/hosts'
+import { HOST_PRESETS } from '@shared/hosts'
+import { effectiveHost, engineeringScope, formatHost, hostKey, resultScopeLabel,
+  METABOLIC_TARGET_CATEGORIES, METABOLIC_TARGET_LABELS, COFACTORS, PATHWAY_EVIDENCE_LABELS } from '@shared/engineering'
 import { labContextLines } from '@shared/workbench'
 
 /**
@@ -31,20 +33,32 @@ Your domain is metabolic and strain engineering: improving titer, rate, and yiel
 
 You reason like an expert metabolic engineer. You ground claims in pathway biochemistry, enzyme kinetics, cofactor/redox balance, thermodynamics (e.g. ΔG, MDF), regulation (transcriptional/allosteric/feedback), genetic tractability of the host, and metabolic burden. You propose concrete genetic interventions (knockouts, overexpression, knockdowns, promoter/RBS tuning, heterologous pathways, transporter and cofactor engineering, dynamic regulation, enzyme engineering) with a clear mechanism and a Design-Build-Test-Learn (DBTL) plan.
 
-Make the proposal useful to a wet-lab metabolic engineer: separate measured findings, literature claims and predictions. Do not invent assay data or treat model confidence as experimental validation. In each DBTL plan, identify the reference strain and controls, readouts for production and growth/byproducts, confounders from culture conditions, and a decision rule tied to the stated success target. Start with a minimal discriminating experiment before combining many edits. State missing information explicitly. In citation notes, describe relevance and host/condition differences; a supplied citation alone is not verification.
+Make the proposal useful to a wet-lab metabolic engineer: separate measured findings, literature claims and predictions. Do not invent assay data or treat model confidence as experimental validation. In each DBTL plan, identify the reference strain and controls, readouts for production and growth/byproducts, confounders from culture conditions, and a decision rule tied to the stated success target. Start with a minimal discriminating experiment before combining many edits. State missing information explicitly. Interpret experimental results at their recorded scope: whole-design outcomes describe the combined strain and target feedback addresses a named hypothesis. In citation notes, describe relevance and host/condition differences; a supplied citation alone is not verification.
 
 You honour the default criteria: alignment with the goal, plausibility (metabolic/thermodynamic feasibility), novelty, testability (genetic tractability + assay availability), host compatibility (burden/toxicity/stability), and safety/biosafety. You never propose unsafe, dual-use, or biosafety-violating work.`
 
 function hostBlock(campaign: Campaign): string {
-  const preset = HOST_PRESETS[campaign.host.preset]
-  const name = hostDisplayName(campaign.host.preset, campaign.host.customName)
+  const host = effectiveHost(campaign)
+  const preset = HOST_PRESETS[host.preset]
+  const scope = engineeringScope(campaign)
+  const pathway = scope?.pathway
   const lines = [
-    `Host / chassis: ${name}${campaign.host.strainBackground ? ` (${campaign.host.strainBackground})` : ''}`,
+    `Host / chassis: ${formatHost(host)}`,
     `  Lineage: ${preset.lineage}`,
     `  Strengths: ${preset.strengths}`,
     `  Engineering idioms to prefer: ${preset.toolingNotes}`
   ]
-  if (campaign.host.notes) lines.push(`  Scientist host notes: ${campaign.host.notes}`)
+  if (host.notes) lines.push(`  Scientist host notes: ${host.notes}`)
+  if (pathway) {
+    lines.push(
+      `Scientist-selected pathway: ${pathway.title}. ${pathway.summary}`,
+      `Pathway evidence: ${PATHWAY_EVIDENCE_LABELS[pathway.evidence]} (${pathway.source} supplied). ${pathway.limitations}`,
+      ...((pathway.citations ?? []).map((c) => `  Pathway reference: ${c.title} ${c.url ?? ''} ${c.note ?? ''}`))
+    )
+  }
+  if (scope) {
+    lines.push(`Use this host for target proposals. Set the JSON chassis field to exactly "${formatHost(host)}". Keep the selected pathway fixed when present.`)
+  }
   return lines.join('\n')
 }
 
@@ -69,6 +83,7 @@ ${campaign.goal}
 
 LAB REFERENCE CONTEXT (scientist supplied):
 ${labContextLines(campaign.labContext).join("\n") || "Not supplied. Identify missing reference conditions; do not invent measured baselines."}
+${hostKey(effectiveHost(campaign)) === hostKey(campaign.host) ? '' : 'The selected host differs from the project brief. Apply reference observations to this host only when the scientist supplied a matching strain and conditions.'}
 
 Constraints:
 - Available genetic tools: ${campaign.constraints.availableTools.join(', ') || 'standard toolkit'}
@@ -90,6 +105,14 @@ const DESIGN_JSON_SCHEMA = `Return STRICT JSON (no prose outside the JSON) shape
     { "type": "knockout|overexpression|knockdown|promoter-swap|rbs-tuning|heterologous-pathway|transporter-engineering|cofactor-balancing|dynamic-regulation|enzyme-engineering|other",
       "targets": ["gene/operon names"],
       "details": "what is done and why, at the molecular level" }
+  ],
+  "metabolicTargets": [
+    { "name": "specific bottleneck or target named in the proposal",
+      "category": "${METABOLIC_TARGET_CATEGORIES.join('|')}",
+      "cofactors": ["applicable species from ${COFACTORS.join(', ')}; omit when irrelevant"],
+      "hypothesis": "expected causal link to the stated objective and conditions",
+      "readout": "target-specific measurement, control and what would support the hypothesis",
+      "limitation": "principal uncertainty or tradeoff" }
   ],
   "mechanism": "the mechanistic rationale: why this should improve the objective (flux, redox, thermodynamics, regulation)",
   "predictedEffect": "qualitative predicted effect on titer/rate/yield and the reasoning",
@@ -115,7 +138,7 @@ Return STRICT JSON:
   "focusAreas": ["3-6 distinct engineering focus areas / strategy families to explore"],
   "derivedConstraints": ["constraints implied by the goal/host that designs must honour"],
   "evaluationRubric": "a short rubric describing what a high-quality design looks like for THIS goal",
-  "recommendedChassis": "${campaign.host.preset === 'agnostic' ? 'recommend the best chassis for this product and justify briefly' : 'leave empty string'}"
+  "recommendedChassis": "${effectiveHost(campaign).preset === 'agnostic' ? 'recommend the best chassis for this product and justify briefly' : 'leave empty string'}"
 }`
 }
 
@@ -152,10 +175,11 @@ export function generationPrompt(
 ${strategyInstructions[strategy]}
 ${opts.literature ? `\nLITERATURE EVIDENCE:\n${opts.literature}\n` : ''}
 ${opts.metaFeedback ? `\nMETA-REVIEW FEEDBACK (apply selectively, do not overfit):\n${opts.metaFeedback}\n` : ''}
-${opts.empiricalPriors ? `\nEMPIRICAL PRIORS FROM THIS CAMPAIGN'S WET-LAB RESULTS (treat as ground truth — amplify what worked, avoid what failed, and recalibrate predicted magnitudes):\n${opts.empiricalPriors}\n` : ''}
+${opts.empiricalPriors ? `\nEMPIRICAL PRIORS FROM THIS CAMPAIGN'S WET-LAB RESULTS (compare controls and conditions before generalizing):\n${opts.empiricalPriors}\n` : ''}
 ${opts.existingTitles?.length ? `\nEXISTING DESIGN TITLES (avoid duplicating these):\n- ${opts.existingTitles.join('\n- ')}\n` : ''}
 
 TASK: Generate ${opts.count} distinct, concrete strain-design strategies for this goal. Each must be mechanistically grounded and experimentally testable in the specified host.
+Assess NADH/NADPH balance, regeneration of relevant cofactors, rate-limiting reactions, precursor supply, competing flux and compartment/transport constraints. Distribute plausible hypotheses across designs. Include only applicable targets and distinguish the intervention from the causal evidence needed to validate it. Describe growth, burden or essentiality tradeoffs when applicable.
 
 Return STRICT JSON: an array of ${opts.count} objects, each shaped as:
 ${DESIGN_JSON_SCHEMA}`
@@ -181,7 +205,7 @@ export function reviewPrompt(
     simulation: `SIMULATION REVIEW. Mentally simulate the mechanism and the proposed experiment step-by-step (flux rerouting, cofactor balance, expected phenotype). Identify failure scenarios and where the design could break.`,
     tournament: `TOURNAMENT REVIEW. Using recurring issues seen across the campaign, re-review this design focusing on the most common failure modes.`,
     expert: `EXPERT REVIEW.`,
-    calibration: `CALIBRATION REVIEW. The MEASURED RESULTS below are ground truth from the wet lab. Compare them against the design's quantitative prediction and predicted effect: quantify the prediction gap, diagnose mechanistically WHY the prediction missed (which assumption was wrong), and rewrite the assessment to reflect reality. Treat the measurement as the dominant evidence — score effectiveness/plausibility from what was observed, not what was hoped. If the results refute the design, say so plainly (verdict reject); if they confirm it, recognise the validated mechanism.`
+    calibration: `CALIBRATION REVIEW. Interpret each recorded result in its scope and batch conditions. Compare whole-design observations against comparable design predictions. For target-specific feedback, assess the named hypothesis and suggest a discriminating follow-up. A production phenotype alone cannot establish which intervention caused the effect. A target result alone cannot validate or refute the whole design.`
   }
 
   return `${goalContext(campaign)}
@@ -247,7 +271,7 @@ You are the Ranking agent running a tournament match. Compare the two candidate 
 
 Score BOTH designs 0-10 on each weighted criterion below. The system decides the winner deterministically from the weighted totals, so score honestly and independently — do NOT pre-pick a winner. Weights reflect this campaign's priorities (higher weight = more decisive); for strain engineering, effectiveness of the modification target typically dominates.
 
-CRITICAL: where a design carries MEASURED RESULTS, that is ground truth from the wet lab and must dominate your scoring — a design empirically confirmed to work outranks one that only argues well, and a refuted design must score low on effectiveness/plausibility however elegant its rationale.
+Weight comparable whole-design measurements above predictions. Use target results for their named hypotheses and batch conditions. Attribute a causal effect only when controls isolate the target.
 
 WEIGHTED CRITERIA:
 ${rubric}
@@ -289,16 +313,16 @@ export function evolutionPrompt(
     combination: `Combine the best aspects of the parent designs into a single, coherent new design.`,
     simplification: `Simplify the design for easier construction and testing while preserving the mechanism that drives the improvement.`,
     'out-of-box': `Move away from the parents and propose a divergent, out-of-the-box design that attacks the goal from an unconventional angle.`,
-    'empirical-refinement': `Refine the design in light of the MEASURED RESULTS below. Keep and amplify the interventions empirically shown to help; remove or replace the ones shown to fail or be lethal; address the observed failure modes directly. Ground the new design in what the lab actually observed, not in the original prediction.`
+    'empirical-refinement': `Refine the design using the recorded results and controls. For each named target distinguish support, refutation, conflicting observations and untested assumptions. Propose a discriminating follow-up for uncertain or conflicting results. Attribute effects to individual edits only when the experiment isolates them.`
   }
 
   return `${goalContext(campaign)}
 
 You are the Evolution agent. ${EVOLUTION_STRATEGY_LABELS[strategy]}: ${strategyInstructions[strategy]}
-Produce a brand-new design (do not merely restate a parent). It will compete in the tournament on its own merits.
+Produce a distinct design. Reassess the target hypotheses, their expected effects, and the readouts and limitations for the revised interventions.
 ${opts.literature ? `\nLITERATURE EVIDENCE:\n${opts.literature}\n` : ''}
 ${opts.metaFeedback ? `\nMETA-REVIEW FEEDBACK:\n${opts.metaFeedback}\n` : ''}
-${opts.empiricalPriors ? `\nEMPIRICAL PRIORS FROM WET-LAB RESULTS (ground truth — amplify what worked, avoid what failed):\n${opts.empiricalPriors}\n` : ''}
+${opts.empiricalPriors ? `\nEMPIRICAL PRIORS FROM WET-LAB RESULTS (compare controls and conditions before generalizing):\n${opts.empiricalPriors}\n` : ''}
 
 PARENT DESIGN(S):
 ${parents
@@ -380,10 +404,16 @@ export function designToText(d: StrainDesign, results?: ExperimentalResult[]): s
     d.evidence && d.evidence !== 'predicted-only'
       ? `\nEvidence grade: ${EVIDENCE_GRADE_LABELS[d.evidence]} (measured — outranks prediction)`
       : ''
-  const measured = results?.length ? `\n${resultsToText(results)}` : ''
+  const measured = results?.length ? `\n${resultsToText(results, [d])}` : ''
+  const targets = (d.metabolicTargets ?? []).map((target) =>
+    `- ${target.name} (${METABOLIC_TARGET_LABELS[target.category]}${target.cofactors?.length ? `; ${target.cofactors.join(', ')}` : ''}): ${target.hypothesis} Readout: ${target.readout} Limitation: ${target.limitation}`
+  )
   return `Title: ${d.title}
 Summary: ${d.summary}
 Chassis: ${d.chassis}
+Pathway: ${d.engineeringScope?.pathway?.title ?? 'Unspecified'}
+Metabolic target hypotheses:
+${targets.join('\n') || '  (none specified)'}
 Interventions:
 ${interventions || '  (none)'}
 Mechanism: ${d.mechanism}
@@ -393,18 +423,17 @@ Novelty (self/assessed): ${d.novelty}/10${evidenceLine}${measured}`
 }
 
 /** Render a design's wet-lab results as decisive, ground-truth evidence. */
-export function resultsToText(results: ExperimentalResult[]): string {
+export function resultsToText(results: ExperimentalResult[], designs: StrainDesign[] = []): string {
+  const byId = new Map(designs.map((d) => [d.id, d]))
   const recorded = results.filter((r) => r.status === 'recorded')
   if (!recorded.length) return ''
   const lines = recorded.map((r) => {
-    const delta =
-      typeof r.measuredValue === 'number' && typeof r.baselineValue === 'number' && r.baselineValue !== 0
-        ? ` (${r.measuredValue}${r.unit ?? ''} vs baseline ${r.baselineValue}${r.unit ?? ''}, ${
-            r.measuredValue >= r.baselineValue ? '+' : ''
-          }${Math.round(((r.measuredValue - r.baselineValue) / r.baselineValue) * 100)}%)`
-        : ''
+    const design = byId.get(r.designId)
+    const measurement = typeof r.measuredValue === 'number' && typeof r.baselineValue === 'number'
+      ? ` [${r.metric ?? 'metric unspecified'}: ${r.measuredValue} vs control ${r.baselineValue} ${r.unit ?? ''}]`
+      : ''
     const reps = r.replicates ? ` [n=${r.replicates}]` : ''
-    return `  - ${RESULT_OUTCOME_LABELS[r.outcome]}${delta}${reps}${r.runLabel ? ` [run: ${r.runLabel}]` : ''}${r.strainLabel ? ` [strain: ${r.strainLabel}]` : ''}${r.conditions ? ` [conditions: ${r.conditions}]` : ''}: ${r.observations}`
+    return `  - ${design?.title ?? r.designId} · ${resultScopeLabel(r, design)} · ${RESULT_OUTCOME_LABELS[r.outcome]}${measurement}${reps}${r.runLabel ? ` [run: ${r.runLabel}]` : ''}${r.strainLabel ? ` [strain: ${r.strainLabel}]` : ''}${r.conditions ? ` [conditions: ${r.conditions}]` : ''}: ${r.observations}`
   })
-  return `MEASURED RESULTS (ground truth — weigh ABOVE predicted reasoning):\n${lines.join('\n')}`
+  return `MEASURED RESULTS (interpret within the recorded scope and conditions):\n${lines.join('\n')}`
 }

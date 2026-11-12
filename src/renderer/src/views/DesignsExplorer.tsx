@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { engineeringScope, inEngineeringScope, METABOLIC_TARGET_CATEGORIES, METABOLIC_TARGET_LABELS, PATHWAY_EVIDENCE_LABELS } from '@shared/engineering'
 import { useStore } from '../store/useStore'
 import {
   DesignStatusBadge,
@@ -12,6 +13,7 @@ import { Drawer } from '../components/Drawer'
 import { ExportButton } from '../components/ExportButton'
 import {
   compareDesigns,
+  evidenceGradeFor,
   CRITERION_LABELS,
   EVOLUTION_STRATEGY_LABELS,
   INTERVENTION_LABELS,
@@ -77,10 +79,14 @@ export function DesignsExplorer(): JSX.Element {
   const [filter, setFilter] = useState<Filter>('active')
   const [search, setSearch] = useState('')
   const [evidence, setEvidence] = useState('all')
+  const [category, setCategory] = useState('all')
+  const [scope, setScope] = useState('current')
   const [compareIds, setCompareIds] = useState<string[]>([])
   const [comparing, setComparing] = useState(false)
   const designs = useMemo(() => {
     let list = snapshot?.designs ?? []
+    if (scope === 'current' && snapshot) list = list.filter((d) => inEngineeringScope(snapshot.campaign, d))
+    if (category !== 'all') list = list.filter((d) => d.metabolicTargets?.some((target) => target.category === category))
     if (filter === 'active') list = list.filter(canShortlist)
     else if (filter !== 'all') list = list.filter((d) => d.status === filter)
     if (evidence === 'measured')
@@ -94,6 +100,10 @@ export function DesignsExplorer(): JSX.Element {
           d.title,
           d.summary,
           d.mechanism,
+          d.engineeringScope?.pathway?.title ?? '',
+          ...(d.metabolicTargets ?? []).flatMap((target) =>
+            [target.name, METABOLIC_TARGET_LABELS[target.category], target.hypothesis, ...target.cofactors ?? []]
+          ),
           ...d.interventions.flatMap((iv) => [
             ...iv.targets,
             iv.details,
@@ -105,27 +115,36 @@ export function DesignsExplorer(): JSX.Element {
           .includes(query)
       )
     return [...list].sort(compareDesigns)
-  }, [snapshot?.designs, filter, evidence, search])
+  }, [snapshot?.designs, snapshot?.campaign, filter, evidence, search, category, scope])
   if (!snapshot)
     return (
       <div className="page">
         <Empty title="Select a research project to explore strategies" />
       </div>
     )
+  const activePathway = engineeringScope(snapshot.campaign)?.pathway
+  const hasHistoricalDesigns = snapshot.designs.some((d) => !inEngineeringScope(snapshot.campaign, d))
   const compared = snapshot.designs.filter((d) => compareIds.includes(d.id))
   return (
     <div className="page col gap-lg">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Design → decide</div>
-          <h1>Design strategies</h1>
+          <h1>Metabolic targets</h1>
           <p className="muted">
-            Compare the biological rationale and experimental evidence. Choose a manageable set to
-            test.
+            {activePathway && `${activePathway.title} · `}
+            Compare proposed interventions, target hypotheses and their experimental evidence.
           </p>
         </div>
       </div>
       <div className="strategy-toolbar">
+        {hasHistoricalDesigns && <select aria-label="Design scope" value={scope} onChange={(e) => setScope(e.target.value)}>
+          <option value="current">Current host and pathway</option>
+          <option value="all">All project designs</option>
+        </select>}
+        <select aria-label="Target category" value={category} onChange={(e) => setCategory(e.target.value)}>
+          <option value="all">All target categories</option>
+          {METABOLIC_TARGET_CATEGORIES.map((entry) => <option key={entry} value={entry}>{METABOLIC_TARGET_LABELS[entry]}</option>)}
+        </select>
         <input
           aria-label="Search designs, genes or mechanisms"
           type="search"
@@ -201,6 +220,8 @@ export function DesignsExplorer(): JSX.Element {
                   setSearch('')
                   setFilter('all')
                   setEvidence('all')
+                  setCategory('all')
+                  setScope('all')
                 }}
               >
                 Reset filters
@@ -222,9 +243,9 @@ export function DesignsExplorer(): JSX.Element {
             </thead>
             <tbody>
               {designs.map((d) => {
-                const resultCount = snapshot.results.filter(
-                  (r) => r.designId === d.id && r.status === 'recorded'
-                ).length
+                const activeResults = snapshot.results.filter((r) => r.designId === d.id && r.status === 'recorded')
+                const targetCount = activeResults.filter((r) => r.targetId).length
+                const designCount = activeResults.length - targetCount
                 return (
                   <tr key={d.id} className={selectedDesignId === d.id ? 'selected' : ''}>
                     <td>
@@ -246,6 +267,11 @@ export function DesignsExplorer(): JSX.Element {
                       </button>
                       <div className="strategy-summary">{d.summary}</div>
                       <div className="row wrap gap-sm">
+                        {(d.metabolicTargets ?? []).map((target) =>
+                          <span className="badge accent" key={target.id}>{METABOLIC_TARGET_LABELS[target.category]} · {target.name}</span>
+                        )}
+                      </div>
+                      <div className="row wrap gap-sm">
                         {d.interventions.map((iv, i) => (
                           <span className="intervention-tag" key={i}>
                             {INTERVENTION_LABELS[iv.type]}
@@ -258,12 +284,15 @@ export function DesignsExplorer(): JSX.Element {
                       <div className="prediction-text">{predictionLabel(d)}</div>
                       <small className="muted">
                         {d.interventions.length} changes · {d.chassis || 'Host not specified'}
+                        {d.engineeringScope?.pathway && ` · ${d.engineeringScope.pathway.title}`}
                       </small>
                     </td>
                     <td>
                       <EvidenceBadge grade={d.evidence} showPredicted />
                       <div className="hint">
-                        {resultCount} active result{resultCount === 1 ? '' : 's'} ·{' '}
+                        {designCount} whole-design · {targetCount} target results
+                      </div>
+                      <div className="hint">
                         {d.citations.length} supplied references
                       </div>
                       {hasConflictingResults(
@@ -403,9 +432,17 @@ export function DesignDrawer({
 }): JSX.Element {
   const { snapshot, refreshSnapshot } = useStore()
   const [tab, setTab] = useState<'proposal' | 'evidence' | 'experiment'>('proposal')
+  const [recordTargetId, setRecordTargetId] = useState<string>()
+  const resultFormRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (tab !== 'experiment' || !recordTargetId) return
+    resultFormRef.current?.scrollIntoView({ block: 'start' })
+    resultFormRef.current?.querySelector('select')?.focus({ preventScroll: true })
+  }, [tab, recordTargetId])
   if (!snapshot) return <></>
   const reviews = snapshot.reviews.filter((r) => r.designId === design.id)
   const results = snapshot.results.filter((r) => r.designId === design.id)
+  const pathway = design.engineeringScope?.pathway
   const gaps = designGaps(design, results)
   return (
     <Drawer
@@ -446,6 +483,7 @@ export function DesignDrawer({
               <h3>The strategy</h3>
               <p className="prose">{design.summary}</p>
               <p className="hint">Host: {design.chassis || 'Not specified'}</p>
+              {pathway && <p className="hint">Pathway: {pathway.title} · {PATHWAY_EVIDENCE_LABELS[pathway.evidence]}</p>}
             </div>
             <div className="detail-block">
               <h3>What changes in the strain</h3>
@@ -460,6 +498,37 @@ export function DesignDrawer({
                   </div>
                 ))}
               </div>
+            </div>
+            <div className="detail-block">
+              <h3>Metabolic target hypotheses</h3>
+              {design.metabolicTargets?.length ? (
+                <div className="col gap-sm">
+                  {design.metabolicTargets.map((target) => {
+                    const feedback = results.filter((result) => result.targetId === target.id)
+                    const recorded = feedback.filter((result) => result.status === 'recorded')
+                    return <article className="lineage-node" key={target.id}>
+                      <div className="row wrap gap-sm">
+                        <b>{target.name}</b>
+                        <span className="badge accent">{METABOLIC_TARGET_LABELS[target.category]}</span>
+                        {target.cofactors?.length ? <span className="badge">{target.cofactors.join(', ')}</span> : null}
+                      </div>
+                      <p className="prose">{target.hypothesis}</p>
+                      <p className="hint">Readout: {target.readout}</p>
+                      <p className="hint">Uncertainty: {target.limitation}</p>
+                      <div className="row wrap gap-sm">
+                        <EvidenceBadge grade={evidenceGradeFor(feedback, target.id)} showPredicted />
+                        <span className="hint">{recorded.length} active results</span>
+                        {hasConflictingResults(feedback) && <span className="badge warn">Conflicting results</span>}
+                        <span className="spacer" />
+                        <button className="btn btn-sm" onClick={() => {
+                          setRecordTargetId(target.id)
+                          setTab('experiment')
+                        }}>Record target feedback</button>
+                      </div>
+                    </article>
+                  })}
+                </div>
+              ) : <p className="hint">No structured target hypotheses were supplied for this design.</p>}
             </div>
             <div className="detail-block">
               <h3>Why it may work</h3>
@@ -525,7 +594,7 @@ export function DesignDrawer({
                   interpreting the aggregate evidence label.
                 </p>
               )}
-              <ResultsList results={results} onChanged={refreshSnapshot} />
+              <ResultsList results={results} design={design} onChanged={refreshSnapshot} />
             </div>
             <div className="detail-block">
               <h3>References supplied with the proposal ({design.citations.length})</h3>
@@ -620,18 +689,19 @@ export function DesignDrawer({
                 ))}
               </details>
             )}
-            <div className="detail-block">
+            <div className="detail-block" ref={resultFormRef}>
               <h3>Record a measured outcome</h3>
               <RecordResultForm
                 key={design.id}
                 campaignId={design.campaignId}
                 designId={design.id}
+                initialTargetId={recordTargetId}
                 onDone={refreshSnapshot}
               />
             </div>
             <div className="detail-block">
               <h3>Result history</h3>
-              <ResultsList results={results} onChanged={refreshSnapshot} />
+              <ResultsList results={results} design={design} onChanged={refreshSnapshot} />
             </div>
           </>
         )}

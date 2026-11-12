@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore'
 import { Empty } from '../components/ui'
 import { IconDownload, IconOverview, IconRefresh } from '../components/Icons'
 import { OBJECTIVE_LABELS, type CampaignSnapshot, type MetaReview } from '@shared/domain'
-import { hostDisplayName } from '@shared/hosts'
+import { effectiveHost, engineeringScope, engineeringScopeId, formatHost } from '@shared/engineering'
 
 /** A filesystem-safe slug for the export file name. */
 function slugify(s: string): string {
@@ -22,7 +22,9 @@ function buildMarkdown(snapshot: CampaignSnapshot, meta: MetaReview): string {
   L.push('## Campaign')
   L.push('')
   L.push(`- **Product / phenotype target:** ${c.productTarget}`)
-  L.push(`- **Host:** ${hostDisplayName(c.host.preset, c.host.customName)}`)
+  L.push(`- **Host:** ${formatHost(effectiveHost(c))}`)
+  const pathway = engineeringScope(c)?.pathway
+  if (pathway) L.push(`- **Pathway:** ${pathway.title}`)
   L.push(`- **Objective:** ${OBJECTIVE_LABELS[c.objective]}`)
   if (c.goal.trim()) {
     L.push('')
@@ -86,7 +88,7 @@ export function ResearchOverview(): JSX.Element {
 
   if (!snapshot) return <div className="page"><Empty icon={<IconOverview size={36} />} title="No campaign selected" /></div>
 
-  const latest = snapshot.metaReviews[snapshot.metaReviews.length - 1]
+  const latest = snapshot.metaReviews.filter((meta) => meta.engineeringScopeId === engineeringScopeId(snapshot.campaign)).at(-1)
   // A meta-review record can exist with an empty overview (e.g. an LLM parse
   // failure at end-of-run). Treat that as "not generated" so the scientist can
   // retry, rather than showing a blank card.

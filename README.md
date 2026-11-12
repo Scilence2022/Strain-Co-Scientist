@@ -60,7 +60,8 @@ agents review (2024).
 
 The wet-lab path is **closed**, not just flagged. The scientist records an
 `ExperimentalResult` (outcome + measured-vs-baseline value + observations)
-against any design, and it flows back through the whole engine:
+against a whole design or one of its target hypotheses. The result flows back
+through the engine within its recorded scope:
 
 - **Authoritative evidence grade** — a design's results derive an evidence grade
   (`measured-confirmed > measured-partial > predicted-only > measured-refuted`)
@@ -70,16 +71,16 @@ against any design, and it flows back through the whole engine:
   ladder replay is preserved — measured outcomes enter only as a pure function
   of persisted data.
 - **Anchored reasoning** — measured results are injected into tournament match
-  prompts as decisive evidence, drive a dedicated **calibration** review mode,
-  and seed an **empirical-refinement** evolution strategy + campaign-level priors
-  (amplify what worked, avoid what failed).
+  prompts with their target, controls and conditions. They drive a
+  **calibration** review and **empirical refinement** in the same host and
+  pathway. Whole-design outcomes drive the design evidence grade.
 - **Prediction calibration** — each design commits to a structured
   `QuantPrediction`; a per-cycle `CalibrationProfile` (signed bias, MAE,
   Spearman, Brier, per-intervention-class bias) feeds back into agent prompts so
   the system measurably learns to predict better.
 - **Asynchronous re-opening** — results recorded weeks later on a terminated
-  campaign re-open it for a results-informed cycle (`reopenCampaign`); a
-  campaign won't terminate while there's unprocessed lab data.
+  campaign can drive a results-informed round when the scientist re-opens it
+  (`reopenCampaign`). The cycle budget bounds automatic processing.
 
 See `src/main/engine/learn/Calibration.ts` and the `Experiments` view.
 
@@ -175,22 +176,37 @@ including on older projects. Pause running research before editing it. Changes
 apply to future research; old design predictions and recorded batch values keep
 their original context.
 
-### 2. Configure research and evidence sources
+### 2. Select the host and compare pathways
 
-Use **Set up research** or **Settings** to configure a provider and its models.
-Optionally enable the literature and CodeXomics connections. Then use **Start
-research**. The workbench surfaces a suggested next step, candidate strategies,
-experimental reference and lab evidence; it does not use Elo as the headline
-measure of biological success.
+Use **Host selection** to confirm a chassis and strain. A named host in the
+project brief serves as the starting selection. Enter your own host or request
+model suggestions with rationale, limitations and supplied references.
 
-### 3. Compare and shortlist strategies
+In **Metabolic pathways**, add routes manually or request suggestions for the
+selected host. Compare estimated days to first experimental validation,
+yield, and reaction count within a stated start and end boundary. Time to
+validation is a planning estimate. Production rate is an experimental metric.
+The comparison highlights best available values where units, estimate types and
+assumptions match. Use the hypothesis filter to explore unvalidated routes and
+inspect the cited evidence for reported routes.
 
-**Design strategies** searches titles, genes, intervention details and mechanisms.
-Filter candidate strategies, the lab shortlist, all proposals or rejected designs,
-and distinguish predicted-only proposals from designs with measured evidence.
-Select two or three designs for a side-by-side comparison of proposed changes,
-mechanism, predicted effect, reference context, evidence, risks, gaps and first
-proposed test. Selection is preserved when background data refreshes.
+Select a route to focus the next analysis. Switching host or route starts or
+resumes research for that selection with its own cycle budget. Earlier designs
+and their evidence remain available under **All project designs** and in the
+experiment history. Projects without a pathway selection can still run
+open-ended research.
+
+### 3. Analyze targets and shortlist designs
+
+Use **Settings** to configure a model provider and optional research
+connections. **Start research** generates target hypotheses for the current
+selection. **Metabolic targets** supports search, evidence and category filters,
+and side-by-side design comparison. The categories cover NADH/NADPH balance,
+cofactor regeneration (including NAD, NADP, CoA, SAM and FAD), rate-limiting
+steps, precursor supply, competing flux, and organelle or compartment
+engineering. Each structured target has a hypothesis, a readout and a
+limitation. You can also add a target hypothesis when contributing a design
+from **Scientist input**.
 
 **Shortlist for lab** selects eligible candidates (reviewed proposals or expert
 contributions) for experimental planning.
@@ -199,8 +215,9 @@ shortlisted. A shortlist is a scientist's planning decision, not protocol approv
 
 Open a design from the workbench, strategies, experiment queue, roadmap or map:
 
-- **Strategy & mechanism** — proposed changes, rationale, predicted effect,
-  tradeoffs and missing evidence. AI comparison metrics and lineage are secondary.
+- **Strategy & mechanism** — proposed changes, target hypotheses, readouts,
+  uncertainties, and evidence for each target. Choose **Record target feedback**
+  to open the result form for that hypothesis.
 - **Evidence & reviews** — active and excluded results, conflicting conclusions,
   supplied references with relevance notes, review narratives and evidence.
 - **Plan & record results** — proposed DBTL steps, construct suggestions and
@@ -230,10 +247,12 @@ desirable. A zero baseline is retained but has no relative percentage. Conflicti
 active conclusions are highlighted. **Exclude from evidence** disputes a result;
 restore it when resolved. Excluded records remain visible and in exports.
 
-Evidence ranking and calibration update on save. Resume research, or re-open a
-finished project from the experiments view, to incorporate the observations into
-new proposals. The calibration charts live under a collapsed advanced section;
-explicitly different phenotype measurements are excluded from the comparison.
+A result can address the whole design or an individual target hypothesis.
+Whole-design results update the evidence grade and, for comparable phenotypes,
+prediction calibration. Target feedback updates the evidence for the named
+hypothesis. A combined-strain result alone cannot establish the contribution of
+each edit. Resume or re-open research with the same host and pathway to bring
+the observed outcomes and conditions into reviews and empirical refinement.
 
 ### 5. Take the plan to the bench
 
@@ -245,7 +264,8 @@ with a generated protocol.
 
 Export **CSV result records** from Experiments & results for lab notebooks and
 further analysis. Exports preserve batch/strain identity, measurement/control
-values, units, replicates, actual conditions, observations and evidence status.
+values, units, replicates, actual conditions, observations, design host and
+pathway, and the result scope.
 
 Use **Scientist input** to refine the goal, contribute a design or provide an
 expert review. The **Engineering roadmap** synthesizes the research; **Research

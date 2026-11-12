@@ -1,3 +1,4 @@
+import { engineeringScope, inEngineeringScope } from '@shared/engineering'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { Empty, EvidenceBadge } from '../components/ui'
@@ -50,7 +51,7 @@ export function ExperimentsView(): JSX.Element {
     // Latest recorded, measurable result per design → a calibration scatter point.
     const latest = new Map<string, ExperimentalResult>()
     for (const r of results) {
-      if (r.status !== 'recorded' || signedMeasured(r) === undefined) continue
+      if (r.status !== 'recorded' || r.targetId || signedMeasured(r) === undefined) continue
       const prediction = byId.get(r.designId)?.quantPrediction
       if (r.metric && prediction && r.metric !== prediction.metric) continue
       const prev = latest.get(r.designId)
@@ -84,8 +85,12 @@ export function ExperimentsView(): JSX.Element {
 
   const shortlisted = snapshot.designs.filter((d) => d.status === 'flagged').sort(compareDesigns)
   const pending = shortlisted.filter(
-    (d) => !snapshot.results.some((r) => r.designId === d.id && r.status === 'recorded')
+    (d) => !snapshot.results.some((r) => r.designId === d.id && r.status === 'recorded' && !r.targetId)
   )
+  const pathway = engineeringScope(snapshot.campaign)?.pathway
+  const targetResults = data.results.filter((result) => result.targetId).length
+  const currentDesignIds = new Set(snapshot.designs.filter((d) => inEngineeringScope(snapshot.campaign, d)).map((d) => d.id))
+  const hasCurrentResults = data.results.some((result) => result.status === 'recorded' && currentDesignIds.has(result.designId))
   const calibration = snapshot.calibration ?? []
   const latestCal = calibration[calibration.length - 1]
   const terminal =
@@ -105,14 +110,14 @@ export function ExperimentsView(): JSX.Element {
       <div className="row">
         <div>
           <div className="eyebrow">Build → test → learn</div>
-          <h1>Experiments &amp; results</h1>
+          <h1>Experiments &amp; target feedback</h1>
           <div className="faint" style={{ fontSize: 'var(--fs-sm)' }}>
-            Plan the next batch, record matched controls and bring the observations into your next
-            design round.
+            Record whole-design outcomes and target-specific observations with matched controls.
+            {pathway && ` The next research round uses ${pathway.title}.`}
           </div>
         </div>
         <span className="spacer" />
-        {terminal && (
+        {terminal && hasCurrentResults && (
           <button
             className="btn btn-sm"
             onClick={() => window.api.reopenCampaign(snapshot.campaign.id)}
@@ -149,7 +154,7 @@ export function ExperimentsView(): JSX.Element {
         {!shortlisted.length ? (
           <Empty
             title="No candidates shortlisted"
-            hint="Compare design strategies and choose a small, informative set for your lab."
+            hint="Compare target designs and choose a small, informative set for your lab."
             action={
               <button className="btn" onClick={() => setView('designs')}>
                 Choose candidates →
@@ -166,7 +171,7 @@ export function ExperimentsView(): JSX.Element {
                   </button>
                   <div className="hint">
                     {d.interventions.length} proposed changes ·{' '}
-                    {snapshot.results.some((r) => r.designId === d.id && r.status === 'recorded')
+                    {snapshot.results.some((r) => r.designId === d.id && r.status === 'recorded' && !r.targetId)
                       ? 'Results recorded; retesting available'
                       : 'Awaiting first result'}
                   </div>
@@ -199,6 +204,8 @@ export function ExperimentsView(): JSX.Element {
             {[...snapshot.designs].sort(compareDesigns).map((d) => (
               <option key={d.id} value={d.id}>
                 {d.title}
+                {d.engineeringScope?.pathway && ` · ${d.engineeringScope.pathway.title}`}
+                {!inEngineeringScope(snapshot.campaign, d) && ' · previous plan'}
                 {d.status === 'flagged' ? ' · shortlisted' : ''}
               </option>
             ))}
@@ -272,7 +279,7 @@ export function ExperimentsView(): JSX.Element {
 
       <div className="card">
         <div className="card-head">
-          <div className="card-title">Recorded results ({data.results.length})</div>
+          <div className="card-title">Recorded results ({data.results.length} total · {targetResults} target-specific)</div>
         </div>
         {data.designsWithResults.length === 0 ? (
           <Empty
@@ -288,12 +295,14 @@ export function ExperimentsView(): JSX.Element {
                     {d.title}
                   </button>
                   <EvidenceBadge grade={d.evidence} showPredicted />
+                  <span className="hint">{d.chassis}{d.engineeringScope?.pathway && ` · ${d.engineeringScope.pathway.title}`}</span>
                   <span className="spacer" />
                   {hasConflictingResults(snapshot.results.filter((r) => r.designId === d.id)) && (
                     <span className="badge warn">Conflicting outcomes — review conditions</span>
                   )}
                 </div>
                 <ResultsList
+                  design={d}
                   results={snapshot.results.filter((r) => r.designId === d.id)}
                   onChanged={refreshSnapshot}
                 />

@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { LabReferenceEditor } from '../components/LabReferenceEditor'
 import { useStore } from '../store/useStore'
 import { compareDesigns } from '@shared/domain'
-import { hostDisplayName } from '@shared/hosts'
+import { effectiveHost, engineeringScope, engineeringScopeId, formatHost, hostKey, inEngineeringScope,
+  PATHWAY_EVIDENCE_LABELS } from '@shared/engineering'
 import {
   designGaps,
   experimentBrief,
@@ -27,8 +28,8 @@ export function Workbench(): JSX.Element {
             to your next experiment.
           </h1>
           <p>
-            Describe your strain, process and success criteria. Compare proposed changes, choose
-            candidates, and bring experimental results into the next design round.
+            Choose a host and pathway, identify what limits production, and test the resulting
+            hypotheses against your experimental reference.
           </p>
           <button className="btn btn-primary" onClick={() => setView('campaigns')}>
             Define a research project →
@@ -36,123 +37,75 @@ export function Workbench(): JSX.Element {
         </div>
         <div className="workflow-grid">
           {[
-            [
-              '01',
-              'Define the problem',
-              'Product, strain background, baseline and process conditions.'
-            ],
-            ['02', 'Choose a strategy', 'Compare mechanisms, expected effects and evidence gaps.'],
-            [
-              '03',
-              'Test & learn',
-              'Keep batch context and feed measured outcomes into new designs.'
-            ]
-          ].map(([n, title, text]) => (
-            <div className="card" key={n}>
-              <span className="step-number">{n}</span>
+            ['Choose a host', 'Compare chassis fit, strain background and available tools.'],
+            ['Compare pathways', 'Weigh validation time, yield, reaction count and novelty.'],
+            ['Analyze targets', 'Identify bottlenecks and choose measurements that test each hypothesis.'],
+            ['Learn from results', 'Use measured outcomes and controls to refine the next round.']
+          ].map(([title, description]) => (
+            <div className="card" key={title}>
               <h3>{title}</h3>
-              <p className="muted">{text}</p>
+              <p className="muted">{description}</p>
             </div>
           ))}
         </div>
       </div>
     )
-  const { campaign, results } = snapshot
-  const candidates = snapshot.designs
+  const { campaign } = snapshot
+  const host = effectiveHost(campaign)
+  const pathway = engineeringScope(campaign)?.pathway
+  const currentDesigns = snapshot.designs.filter((design) => inEngineeringScope(campaign, design))
+  const currentIds = new Set(currentDesigns.map((design) => design.id))
+  const results = snapshot.results.filter((result) => currentIds.has(result.designId))
+  const candidates = currentDesigns
     .filter((d) => d.status === 'active' || d.status === 'flagged')
     .sort(compareDesigns)
   const shortlist = candidates.filter((d) => d.status === 'flagged')
   const awaiting = shortlist.filter(
-    (d) => !results.some((r) => r.designId === d.id && r.status === 'recorded')
+    (d) => !results.some((r) => r.designId === d.id && r.status === 'recorded' && !r.targetId)
   )
   const recorded = results.filter((r) => r.status === 'recorded')
   const tested = new Set(recorded.map((r) => r.designId)).size
   const supported = candidates.filter(
     (d) => d.evidence === 'measured-confirmed' || d.evidence === 'measured-partial'
   ).length
-  const latest = snapshot.metaReviews.at(-1)
+  const targetFeedback = recorded.filter((r) => r.targetId).length
+  const latest = snapshot.metaReviews.filter((meta) => meta.engineeringScopeId === engineeringScopeId(campaign)).at(-1)
   const lab = campaign.labContext
-  const next = awaiting.length
-    ? {
-        title: `${awaiting.length} shortlisted candidate${awaiting.length === 1 ? '' : 's'} awaiting results`,
-        text: 'Review the proposed test plan, run your controls and record the measured outcome with its batch conditions.',
-        action: 'Open experiments',
-        view: 'experiments' as const
-      }
-    : shortlist.length
-      ? {
-          title: 'Turn your latest observations into the next design',
-          text: 'Review recorded outcomes and refine the goal with what you learned. Resume or re-open research when ready.',
-          action: 'Review results',
-          view: 'experiments' as const
-        }
-      : candidates.length
-        ? {
-            title: 'Choose a small set of candidates to test',
-            text: 'Compare the mechanism, number of changes and evidence gaps. Shortlist the designs that fit your lab.',
-            action: 'Compare strategies',
-            view: 'designs' as const
-          }
-        : {
-            title:
-              campaign.status === 'running'
-                ? 'Research is in progress'
-                : 'Your research brief is ready',
-            text:
-              campaign.status === 'running'
-                ? 'Proposals appear as they are generated and reviewed. You can refine the brief while research continues.'
-                : 'Check the brief below, configure a research provider if needed, then start research from the top bar.',
-            action: 'Refine the brief',
-            view: 'expert' as const
-          }
+  const next = host.preset === 'agnostic' && !candidates.length
+    ? { title: 'Choose a host for this goal', text: 'Compare candidate chassis or specify the organism and strain you already use.', action: 'Review hosts', view: 'hosts' as const }
+    : !pathway && !candidates.length && campaign.status !== 'running'
+      ? { title: 'Compare pathways in your host', text: 'Select a route to focus the target analysis on its likely production bottlenecks.', action: 'Review pathways', view: 'pathways' as const }
+      : awaiting.length
+        ? { title: `${awaiting.length} shortlisted design${awaiting.length === 1 ? '' : 's'} awaiting whole-design results`, text: 'Record the control, batch conditions and any target-specific observations.', action: 'Open experiments', view: 'experiments' as const }
+        : recorded.length
+          ? { title: 'Use measured results to refine the targets', text: 'Review support, refutation and unresolved observations, then resume or restart research.', action: 'Review feedback', view: 'experiments' as const }
+          : candidates.length
+            ? { title: 'Choose target hypotheses to test', text: 'Compare the expected effect, readout and main uncertainty for each proposal.', action: 'Compare targets', view: 'designs' as const }
+            : { title: campaign.status === 'running' ? 'Target analysis is in progress' : 'Your engineering plan is ready', text: 'Review the experimental reference and use the top bar to run target analysis.', action: 'Review the plan', view: 'pathways' as const }
   return (
     <div className="page workbench col gap-lg">
       <div className="page-heading">
         <div>
           <div className="eyebrow">
-            Research workbench · {hostDisplayName(campaign.host.preset, campaign.host.customName)}
+            Research workbench · {formatHost(host)}
           </div>
           <h1>{campaign.title}</h1>
           <p className="muted">
-            {campaign.host.strainBackground || 'Strain background not specified'} ·{' '}
             {campaign.productTarget}
+            {pathway && ` · ${pathway.title} · ${PATHWAY_EVIDENCE_LABELS[pathway.evidence]}`}
           </p>
         </div>
         <CampaignStatusPill status={campaign.status} />
       </div>
       <div className="workflow-strip">
-        {[
-          {
-            n: '01',
-            label: 'Research brief',
-            value: 'Goal & conditions',
-            view: 'campaigns' as const
-          },
-          {
-            n: '02',
-            label: 'Design strategies',
-            value: `${candidates.length} candidate strategies`,
-            view: 'designs' as const
-          },
-          {
-            n: '03',
-            label: 'Build & test',
-            value: `${shortlist.length} shortlisted · ${awaiting.length} awaiting data`,
-            view: 'experiments' as const
-          },
-          {
-            n: '04',
-            label: 'Learn & refine',
-            value: `${tested} designs tested`,
-            view: 'overview' as const
-          }
-        ].map((step) => (
-          <button key={step.n} className="workflow-step" onClick={() => setView(step.view)}>
-            <span>{step.n}</span>
-            <div>
-              <b>{step.label}</b>
-              <small>{step.value}</small>
-            </div>
+        {([
+          { label: 'Host selection', value: host.preset === 'agnostic' ? 'Choose a chassis' : formatHost(host), view: 'hosts' },
+          { label: 'Metabolic pathways', value: pathway?.title ?? 'Compare candidate routes', view: 'pathways' },
+          { label: 'Metabolic targets', value: `${candidates.length} designs · ${shortlist.length} shortlisted`, view: 'designs' },
+          { label: 'Target feedback', value: `${tested} design${tested === 1 ? '' : 's'} with results · ${targetFeedback} target record${targetFeedback === 1 ? '' : 's'}`, view: 'experiments' }
+        ] as const).map((step) => (
+          <button key={step.view} className="workflow-step" onClick={() => setView(step.view)}>
+            <div><b>{step.label}</b><small>{step.value}</small></div>
           </button>
         ))}
       </div>
@@ -170,7 +123,7 @@ export function Workbench(): JSX.Element {
         <div className="col gap-lg">
           <section className="card pad-lg">
             <div className="card-head">
-              <h2 className="card-title">Candidates to discuss at the bench</h2>
+              <h2 className="card-title">Candidate target designs</h2>
               <button className="btn btn-sm btn-ghost" onClick={() => setView('designs')}>
                 View all →
               </button>
@@ -181,15 +134,15 @@ export function Workbench(): JSX.Element {
             </p>
             {candidates.length ? (
               <div className="col gap-md">
-                {candidates.slice(0, 3).map((d, i) => (
+                {candidates.slice(0, 3).map((d) => (
                   <button className="candidate-card" key={d.id} onClick={() => openDesign(d.id)}>
                     <div className="row gap-sm">
-                      <span className="candidate-index">0{i + 1}</span>
                       <b>{d.title}</b>
                     </div>
                     <p>{d.summary}</p>
                     <div className="row wrap gap-sm">
                       <EvidenceBadge grade={d.evidence} showPredicted />
+                      {!!d.metabolicTargets?.length && <span className="badge">{d.metabolicTargets.length} target hypotheses</span>}
                       <span className="badge">{d.interventions.length} proposed changes</span>
                       {d.status === 'flagged' && <span className="badge warn">Shortlisted</span>}
                     </div>
@@ -239,6 +192,9 @@ export function Workbench(): JSX.Element {
               </button>
             </div>
             <p className="prose">{campaign.goal}</p>
+            {lab && hostKey(host) !== hostKey(campaign.host) && (
+              <p className="hint">The selected host differs from the project brief. Check the reference strain and conditions before running target analysis.</p>
+            )}
             {lab ? (
               <dl className="brief-facts">
                 {labContextLines(lab).map((line) => {
@@ -265,7 +221,7 @@ export function Workbench(): JSX.Element {
               <span> supported candidates</span>
             </div>
             <p className="muted">
-              {recorded.length} active result records across {tested} designs. Review controls,
+              {recorded.length} active result records across {tested} designs, including {targetFeedback} target-specific records. Review controls,
               replicates and conditions before drawing conclusions.
             </p>
             <button className="btn btn-sm" onClick={() => setView('experiments')}>

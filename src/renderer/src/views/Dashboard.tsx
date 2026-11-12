@@ -1,3 +1,4 @@
+import { engineeringScopeId } from '@shared/engineering'
 import { useStore } from '../store/useStore'
 import { EloChart, ChartLegend, StackBar, BiasTrend } from '../components/Charts'
 import { Empty, clockTime } from '../components/ui'
@@ -39,7 +40,8 @@ export function Dashboard(): JSX.Element {
   const bestElo = sortedElo[0]?.elo ?? 1200
   const top10 = sortedElo.slice(0, 10)
   const top10avg = top10.length ? Math.round(top10.reduce((s, d) => s + d.elo, 0) / top10.length) : 1200
-  const latest: SystemStatistics | undefined = statistics[statistics.length - 1]
+  const scopeHistory = statistics.filter((stats) => stats.engineeringScopeId === engineeringScopeId(snapshot.campaign))
+  const latest: SystemStatistics | undefined = scopeHistory.at(-1)
   const progress = latest?.terminalProgress ?? 0
 
   const statusSegments = [
@@ -72,7 +74,7 @@ export function Dashboard(): JSX.Element {
             <div className="card-title">Elo over compute (test-time scaling)</div>
             <ChartLegend />
           </div>
-          <EloChart stats={statistics} />
+          <EloChart stats={scopeHistory} />
         </div>
 
         <div className="col gap-md">

@@ -47,6 +47,9 @@ export function registerIpc(engine: Engine, isTrusted: (event: IpcMainInvokeEven
     getSnapshot: (id) => engine.getSnapshot(id),
     updateTournamentConfig: (id, config) => engine.updateTournamentConfig(id, config),
 
+    suggestEngineeringOptions: (id, stage) => engine.suggestEngineeringOptions(id, stage),
+    updateEngineeringPlan: (id, decision) => engine.updateEngineeringPlan(id, decision),
+
     startCampaign: (id) => engine.startCampaign(id),
     pauseCampaign: (id) => engine.pauseCampaign(id),
     resumeCampaign: (id) => engine.resumeCampaign(id),

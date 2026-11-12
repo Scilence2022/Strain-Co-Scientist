@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { CRITERIA_KEYS, OBJECTIVE_LABELS, INTERVENTION_LABELS, RESULT_OUTCOME_LABELS, AGENT_LABELS } from './domain'
 import type { IpcApiChannel } from './ipc'
 import { PROVIDER_IDS } from './providers'
+import { COFACTORS, METABOLIC_TARGET_CATEGORIES, PATHWAY_EVIDENCE, YIELD_KINDS } from './engineering'
 
 const text = z.string().max(100_000)
 const required = text.trim().min(1)
@@ -55,10 +56,50 @@ export const labContextSchema = z.object({
   medium: text.optional(), conditions: text.optional(), assay: text.optional(), bottlenecks: text.optional()
 })
 
+const hostShape = {
+  customName: text.optional(), strainBackground: text.optional(), notes: text.optional()
+}
+const namedHost = (host: { preset: string; customName?: string }) =>
+  host.preset !== 'custom' || !!host.customName?.trim()
+const hostPresets = ['ecoli', 'scerevisiae', 'cglutamicum', 'bsubtilis', 'pputida', 'ppastoris', 'custom'] as const
+const confirmedHostSchema = z.object({ ...hostShape, preset: z.enum(hostPresets) })
+  .refine(namedHost, 'Custom hosts require a name')
+const citationSchema = z.object({ title: required, url: httpUrl.optional(), note: text.optional() })
+const citations = z.array(citationSchema).max(12).optional()
+
+export const hostOptionSchema = z.object({
+  host: confirmedHostSchema, rationale: required, limitations: required, citations
+})
+
+export const pathwayDraftSchema = z.object({
+  title: required, summary: required, evidence: z.enum(PATHWAY_EVIDENCE), limitations: required, citations,
+  timeToValidation: z.object({ days: finite.positive(), basis: required }).optional(),
+  yield: z.object({ value: finite.nonnegative(), unit: required, basis: required, kind: z.enum(YIELD_KINDS) }).optional(),
+  steps: z.object({ count: integer(1, 1000), basis: required }).optional()
+}).refine((pathway) =>
+  !pathway.evidence.startsWith('reported-') || !!pathway.citations?.length,
+  { path: ['citations'], message: 'Provide a reference for a reported pathway' }
+)
+
+export const metabolicTargetSchema = z.object({
+  name: required, category: z.enum(METABOLIC_TARGET_CATEGORIES),
+  cofactors: z.array(z.enum(COFACTORS)).max(COFACTORS.length).optional(),
+  hypothesis: required, readout: required, limitation: required
+})
+const metabolicTargets = z.array(metabolicTargetSchema).max(12)
+
+const engineeringDecisionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('set-host'), host: confirmedHostSchema }),
+  z.object({ action: z.literal('select-host'), optionId: id }),
+  z.object({ action: z.literal('add-pathway'), pathway: pathwayDraftSchema }),
+  z.object({ action: z.literal('select-pathway'), optionId: id }),
+  z.object({ action: z.literal('clear-pathway') })
+])
+
 export const campaignInputSchema = z.object({
   title: text.trim(), productTarget: required, goal: required,
-  host: z.object({ preset: z.enum(['ecoli', 'scerevisiae', 'cglutamicum', 'bsubtilis', 'pputida', 'ppastoris', 'custom', 'agnostic']), customName: text.optional(), strainBackground: text.optional(), notes: text.optional() })
-    .refine((host) => host.preset !== 'custom' || !!host.customName?.trim(), 'Custom hosts require a name'),
+  host: z.object({ ...hostShape, preset: z.enum([...hostPresets, 'agnostic']) })
+    .refine(namedHost, 'Custom hosts require a name'),
   objective: z.enum(Object.keys(OBJECTIVE_LABELS) as [string, ...string[]]),
   constraints: z.object({ availableTools: strings, forbiddenInterventions: strings, biosafety: z.enum(['BSL-1', 'BSL-2', 'unspecified']), regulatoryNotes: text.optional(), onlyNovel: z.boolean() }),
   preferences: text,
@@ -69,7 +110,7 @@ export const campaignInputSchema = z.object({
 })
 
 const result = z.object({
-  campaignId: id, designId: id,
+  campaignId: id, designId: id, targetId: id.optional(),
   outcome: z.enum(Object.keys(RESULT_OUTCOME_LABELS) as [string, ...string[]]),
   metric: z.enum(['titer', 'rate', 'yield', 'tolerance', 'other']).optional(),
   measuredValue: finite.optional(), baselineValue: finite.optional(),
@@ -83,10 +124,12 @@ export const ipcArguments: Record<IpcApiChannel, z.ZodTypeAny> = {
   testMcp: z.tuple([z.enum(['deepResearch', 'codexomics'])]), pingLlm: z.tuple([]), listProviderModels: z.tuple([provider]),
   listCampaigns: z.tuple([]), createCampaign: z.tuple([campaignInputSchema]), deleteCampaign: z.tuple([id]), getSnapshot: z.tuple([id]),
   updateTournamentConfig: z.tuple([id, tournamentConfigSchema]),
+  suggestEngineeringOptions: z.tuple([id, z.enum(['hosts', 'pathways'])]),
+  updateEngineeringPlan: z.tuple([id, engineeringDecisionSchema]),
   startCampaign: z.tuple([id]), pauseCampaign: z.tuple([id]), resumeCampaign: z.tuple([id]), stopCampaign: z.tuple([id]), reopenCampaign: z.tuple([id]),
   updateLabContext: z.tuple([id, labContextSchema]),
   regenerateOverview: z.tuple([id]), refineGoal: z.tuple([id, required]), flagDesign: z.tuple([id, z.boolean()]),
-  submitExpertDesign: z.tuple([z.object({ campaignId: id, title: required, summary: required, chassis: text, mechanism: text, predictedEffect: text,
+  submitExpertDesign: z.tuple([z.object({ campaignId: id, title: required, summary: required, chassis: text, mechanism: text, predictedEffect: text, metabolicTargets: metabolicTargets.optional(),
     interventions: z.array(z.object({ type: z.enum(Object.keys(INTERVENTION_LABELS) as [string, ...string[]]), targets: strings, details: text })).max(1000) })]),
   submitExpertReview: z.tuple([z.object({ campaignId: id, designId: id, verdict: z.enum(['pass', 'revise', 'reject']), narrative: required, scores, author: text })]),
   recordExperimentalResult: z.tuple([result]), disputeResult: z.tuple([id, id, z.boolean()]),
