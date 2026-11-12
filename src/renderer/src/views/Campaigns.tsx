@@ -3,11 +3,9 @@ import { useState } from 'react'
 import { useStore } from '../store/useStore'
 import { CampaignStatusPill, Empty, timeAgo } from '../components/ui'
 import { IconPlus, IconTrash, IconCampaigns, IconPlay } from '../components/Icons'
-import { HOST_PRESET_LIST, hostDisplayName } from '@shared/hosts'
 import {
   DEFAULT_TOURNAMENT_CONFIG,
   type EngineeringObjective,
-  type HostPresetId,
   type TournamentConfig,
   type LabContext
 } from '@shared/domain'
@@ -158,9 +156,6 @@ const DEPTHS = [
 function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
   const { refreshCampaigns, selectCampaign, setView } = useStore()
   const [step, setStep] = useState(0)
-  const [preset, setPreset] = useState<HostPresetId>('ecoli')
-  const [customName, setCustomName] = useState('')
-  const [strainBackground, setStrainBackground] = useState('')
   const [productTarget, setProductTarget] = useState('')
   const [title, setTitle] = useState('')
   const [objective, setObjective] = useState<EngineeringObjective>('increase-titer')
@@ -181,8 +176,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const setContext = (key: keyof LabContext, value: string) =>
     setLab((l) => ({ ...l, [key]: value }))
-  const validGoal =
-    !!productTarget.trim() && !!goal.trim() && (preset !== 'custom' || !!customName.trim())
+  const validGoal = !!productTarget.trim() && !!goal.trim()
   const validReference =
     (!baseline.trim() || Number.isFinite(Number(baseline))) &&
     (!target.trim() || Number.isFinite(Number(target))) &&
@@ -191,15 +185,11 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
   const submit = async () => {
     if (!validGoal || !validReference || submitting) return
     const input: CreateCampaignInput = {
-      title: title.trim(),
+      title: title.trim() || productTarget.trim(),
       productTarget: productTarget.trim(),
       objective,
       goal: goal.trim(),
-      host: {
-        preset,
-        customName: preset === 'custom' ? customName.trim() : undefined,
-        strainBackground: strainBackground.trim() || undefined
-      },
+      host: { preset: 'agnostic' },
       labContext: {
         ...lab,
         baselineValue: baseline.trim() ? Number(baseline) : undefined,
@@ -226,7 +216,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
       const campaign = await window.api.createCampaign(input)
       await refreshCampaigns()
       await selectCampaign(campaign.id)
-      setView('dashboard')
+      setView('hosts')
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -237,13 +227,13 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
   return (
     <Drawer
       title="Define a research project"
-      subtitle="Start with what you know. Missing experimental details can be supplied later."
+      subtitle="Define the goal and any known experimental conditions, then choose a host."
       onClose={() => {
         if (!submitting) onClose()
       }}
     >
       <div className="wizard-steps">
-        {['Goal & strain', 'Experimental reference', 'Lab constraints'].map((label, i) => (
+        {['Research goal', 'Experimental reference', 'Lab constraints'].map((label, i) => (
           <button
             key={label}
             aria-current={step === i ? 'step' : undefined}
@@ -260,7 +250,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
         {step === 0 && (
           <div className="col gap-md">
             <div className="section-intro">
-              <h3>What would make this strain better?</h3>
+              <h3>What do you want to improve?</h3>
               <p>
                 Describe the production problem in your own words. You do not need a computational
                 model.
@@ -275,41 +265,6 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
                 placeholder="e.g. L-lysine, mevalonate, secreted amylase"
               />
             </div>
-            <div className="grid grid-2">
-              <div className="field">
-                <label htmlFor="project-host">Host organism</label>
-                <select
-                  id="project-host"
-                  value={preset}
-                  onChange={(e) => setPreset(e.target.value as HostPresetId)}
-                >
-                  {HOST_PRESET_LIST.map((h) => (
-                    <option key={h.id} value={h.id}>
-                      {h.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="project-strain">Strain background</label>
-                <input
-                  id="project-strain"
-                  value={strainBackground}
-                  onChange={(e) => setStrainBackground(e.target.value)}
-                  placeholder="Strain name and existing modifications"
-                />
-              </div>
-            </div>
-            {preset === 'custom' && (
-              <div className="field">
-                <label htmlFor="project-custom">Organism name *</label>
-                <input
-                  id="project-custom"
-                  value={customName}
-                  onChange={(e) => setCustomName(e.target.value)}
-                />
-              </div>
-            )}
             <div className="field">
               <label htmlFor="project-objective">Main improvement</label>
               <select
@@ -356,7 +311,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
                 id="project-title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Defaults to product + host"
+                placeholder="Defaults to the product or phenotype"
               />
             </div>
           </div>
@@ -612,9 +567,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
               <TournamentConfigEditor value={tournamentConfig} onChange={setTournamentConfig} />
             </details>
             <div className="brief-summary">
-              <b>
-                {productTarget} · {hostDisplayName(preset, customName)}
-              </b>
+              <b>{title.trim() || productTarget.trim()}</b>
               <p>{goal}</p>
               <span className="muted">
                 Reference: {baseline || 'unspecified'} → target {target || 'unspecified'} {lab.unit}{' '}
@@ -651,7 +604,7 @@ function CampaignForm({ onClose }: { onClose: () => void }): JSX.Element {
             disabled={!validGoal || !validReference || submitting}
             onClick={() => void submit()}
           >
-            {submitting ? 'Saving…' : 'Save research brief'}
+            {submitting ? 'Saving…' : 'Save and choose host'}
           </button>
         )}
       </div>

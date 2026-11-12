@@ -159,8 +159,8 @@ Engine telemetry remains available under **Research details**.
 
 Open **Research projects → New project**. The three-step brief asks for:
 
-1. **Goal & strain** — product or phenotype, host, strain background, primary
-   improvement and a natural-language production problem.
+1. **Research goal** — product or phenotype, primary improvement and a
+   natural-language production problem.
 2. **Experimental reference** — measurement, baseline and success target in a
    shared unit, reference strain, carbon source, culture format, medium,
    conditions, available assays and previous attempts. Unknown values can remain
@@ -170,7 +170,7 @@ Open **Research projects → New project**. The three-step brief asks for:
    balanced or extended research; detailed budgets and comparison weights are
    under advanced settings.
 
-Saving a brief does not start model calls. From **Research workbench**, use
+**Save and choose host** opens **Host selection**. From **Research workbench**, use
 **Edit** beside the experimental reference to add or revise structured context,
 including on older projects. Pause running research before editing it. Changes
 apply to future research; old design predictions and recorded batch values keep
@@ -178,9 +178,9 @@ their original context.
 
 ### 2. Select the host and compare pathways
 
-Use **Host selection** to confirm a chassis and strain. A named host in the
-project brief serves as the starting selection. Enter your own host or request
-model suggestions with rationale, limitations and supplied references.
+Use **Host selection** to choose a chassis and enter the strain background.
+Enter your own host or request model suggestions with rationale, limitations and
+supplied references. Existing projects open with their saved host.
 
 In **Metabolic pathways**, add routes manually or request suggestions for the
 selected host. Compare estimated days to first experimental validation,

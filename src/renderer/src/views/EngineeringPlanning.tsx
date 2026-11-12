@@ -46,7 +46,7 @@ export function EngineeringPlanning({ stage }: { stage: PlanningStage }): JSX.El
     <div className="page col gap-lg engineering-planning">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">{campaign.title} · {campaign.productTarget}</div>
+          <div className="eyebrow">{campaign.title}</div>
           <h1>{stage === 'hosts' ? 'Choose a host' : 'Compare metabolic pathways'}</h1>
           <p className="muted">
             {stage === 'hosts'
@@ -77,7 +77,7 @@ export function EngineeringPlanning({ stage }: { stage: PlanningStage }): JSX.El
                 Suggest hosts
               </button>
             </div>
-            <p className="hint">Project brief: {formatHost(campaign.host)}. {host.preset !== 'agnostic' && `Current host: ${formatHost(host)}.`}</p>
+            <p className="hint">{host.preset === 'agnostic' ? 'No host selected.' : `Current host: ${formatHost(host)}.`}</p>
             {hosts.length === 0 && <p className="muted">Add a host yourself or generate options with your configured model.</p>}
             <div className="planning-hosts">
               {hosts.map((option) => (
@@ -161,12 +161,13 @@ function References({ citations }: { citations?: Citation[] }): JSX.Element | nu
 function HostEditor({ host, disabled, onSave }: {
   host: HostContext; disabled: boolean; onSave: (decision: EngineeringDecision) => Promise<boolean>
 }): JSX.Element {
-  const [draft, setDraft] = useState({ ...host, preset: host.preset === 'agnostic' ? 'ecoli' as const : host.preset })
+  const [draft, setDraft] = useState(host)
   return (
     <details className="card advanced">
       <summary>Specify a host manually</summary>
       <form className="col gap-md" onSubmit={(e) => {
         e.preventDefault()
+        if (draft.preset === 'agnostic') return
         void onSave({ action: 'set-host', host: {
           preset: draft.preset,
           customName: draft.preset === 'custom' ? draft.customName?.trim() : undefined,
@@ -177,8 +178,9 @@ function HostEditor({ host, disabled, onSave }: {
         <div className="grid grid-2">
           <div className="field">
             <label htmlFor="plan-host-preset">Host</label>
-            <select id="plan-host-preset" value={draft.preset}
-              onChange={(e) => setDraft({ preset: e.target.value as typeof draft.preset })}>
+            <select id="plan-host-preset" required value={draft.preset === 'agnostic' ? '' : draft.preset}
+              onChange={(e) => setDraft({ preset: (e.target.value || 'agnostic') as HostContext['preset'] })}>
+              <option value="" disabled>Choose a host…</option>
               {HOST_PRESET_LIST.filter((preset) => preset.id !== 'agnostic').map((preset) => (
                 <option value={preset.id} key={preset.id}>{preset.name}</option>
               ))}
@@ -193,12 +195,12 @@ function HostEditor({ host, disabled, onSave }: {
             <input id="plan-host-strain" value={draft.strainBackground ?? ''} onChange={(e) => setDraft({ ...draft, strainBackground: e.target.value })} />
           </div>
         </div>
-        <p className="hint">{HOST_PRESETS[draft.preset].strengths}</p>
+        {draft.preset !== 'agnostic' && <p className="hint">{HOST_PRESETS[draft.preset].strengths}</p>}
         <div className="field">
           <label htmlFor="plan-host-notes">Selection rationale and host notes</label>
           <textarea id="plan-host-notes" rows={2} value={draft.notes ?? ''} onChange={(e) => setDraft({ ...draft, notes: e.target.value })} />
         </div>
-        <div><button className="btn btn-primary" type="submit" disabled={disabled}>Save host selection</button></div>
+        <div><button className="btn btn-primary" type="submit" disabled={disabled || draft.preset === 'agnostic'}>Save host selection</button></div>
       </form>
     </details>
   )
