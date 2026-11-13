@@ -6,6 +6,7 @@ import type {
   CampaignStatus,
   ExperimentalResult,
   LLMProvider,
+  McpServerConfig,
   LabContext,
   Review,
   StrainDesign
@@ -21,14 +22,17 @@ import type {
   ExpertDesignInput,
   ExpertReviewInput,
   McpTestResult,
+  LlmPingResult,
+  ProviderCredentials,
+  ProviderModelProbe,
   ModelListResult,
   RecordResultInput
 } from '@shared/ipc'
 import { computeCalibration } from './learn/Calibration'
-import { getProvider } from '@shared/providers'
+import { getProvider, resolveBaseUrl } from '@shared/providers'
 import { Store } from '../memory/Store'
 import { createLLMClient, listModels, type LLMClient } from '../llm'
-import { McpManager } from '../mcp/McpManager'
+import { McpConnection, McpManager } from '../mcp/McpManager'
 import { DeepResearchClient } from '../mcp/DeepResearchClient'
 import { CodexomicsClient } from '../mcp/CodexomicsClient'
 import { EngineContext } from './context'
@@ -88,35 +92,40 @@ export class Engine {
     return saved
   }
 
-  async testMcp(server: 'deepResearch' | 'codexomics'): Promise<McpTestResult> {
-    const settings = this.store.getSettings()
-    this.mcp.update(settings.mcp.deepResearch, settings.mcp.codexomics)
-    const conn = server === 'deepResearch' ? this.mcp.deepResearch : this.mcp.codexomics
-    const res = await conn.test()
-    return { server, ok: res.ok, message: res.message, toolCount: res.toolCount, tools: res.tools }
-  }
-
-  async pingLlm(): Promise<{ ok: boolean; message: string; model?: string }> {
+  async testMcp(server: 'deepResearch' | 'codexomics', draft?: McpServerConfig): Promise<McpTestResult> {
+    const saved = this.mcp[server]
+    const connection = draft ? new McpConnection(saved.label, draft) : saved
     try {
-      // Re-create the client so we always ping with the latest saved settings.
-      const fresh = createLLMClient(this.store.getSettings())
-      const reply = await fresh.ping()
-      return { ok: true, message: reply || 'ready', model: this.store.getSettings().llm.tiers.fastTier.model }
-    } catch (err) {
-      return {
-        ok: false,
-        message: err instanceof Error ? err.message : String(err)
-      }
+      return { server, ...await connection.test() }
+    } finally {
+      if (draft) await connection.close()
     }
   }
 
-  /** Refresh a provider's available models using its saved credentials. */
-  async listProviderModels(provider: LLMProvider): Promise<ModelListResult> {
+  async pingLlm(draft?: ProviderModelProbe): Promise<LlmPingResult> {
     const settings = this.store.getSettings()
-    const account = settings.llm.providers[provider]
-    const def = getProvider(provider)
-    const baseUrl = account?.baseUrl?.trim() || def?.baseUrl || ''
-    return listModels(provider, account?.apiKey ?? '', baseUrl)
+    if (draft) {
+      const { provider, model, apiKey, baseUrl } = draft
+      settings.llm.providers[provider] = { enabled: true, apiKey, baseUrl }
+      settings.llm.tiers.fastTier = { provider, model }
+    }
+    const ref = settings.llm.tiers.fastTier
+    const key = settings.llm.providers[ref.provider]?.apiKey.trim()
+    try {
+      const reply = await createLLMClient(settings).ping()
+      const message = key ? reply.replaceAll(key, '[redacted]') : reply
+      return { ok: true, message: message.slice(0, 300) || 'ready', model: ref.model }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      return { ok: false, message: (key ? error.replaceAll(key, '[redacted]') : error).slice(0, 400) }
+    }
+  }
+
+  async listProviderModels(provider: LLMProvider, draft?: ProviderCredentials): Promise<ModelListResult> {
+    const account = draft ?? this.store.getSettings().llm.providers[provider]
+    const definition = getProvider(provider)
+    const baseUrl = definition ? resolveBaseUrl(definition, account?.baseUrl) : account?.baseUrl ?? ''
+    return listModels(provider, account?.apiKey.trim() ?? '', baseUrl)
   }
 
   // -- Campaign CRUD --------------------------------------------------------

@@ -15,7 +15,7 @@
  *    can point the baseUrl at LM Studio, vLLM, llama.cpp's server, etc.
  *  - Provider `id` values are persisted in `AppSettings.llm.provider` and
  *    form the runtime LLMProvider union — adding a new provider means
- *    adding it to `LLM_PROVIDER_IDS` below and to `LLMProvider` in
+ *    adding it to the catalogue below and to `LLMProvider` in
  *    `domain.ts`.
  */
 
@@ -33,13 +33,14 @@ export interface ModelPreset {
 }
 
 export interface ProviderDefinition {
-  id: string
+  id: LLMProvider
   /** Display name in the dropdown (e.g. "DeepSeek"). */
   label: string
   /** Group used to visually cluster providers in the dropdown. */
   group: ProviderGroup
   /** OpenAI-compat base URL, e.g. "https://api.deepseek.com/v1". */
   baseUrl: string
+  docsUrl?: string
   /** API key environment variable hint, for UX. */
   envHint?: string
   /** Whether the provider requires a non-empty API key. */
@@ -155,6 +156,19 @@ export const PROVIDERS: ProviderDefinition[] = [
       { id: 'meta-llama/Meta-Llama-3.1-8B-Instruct', label: 'Llama 3.1 8B Instruct' }
     ],
     description: 'SiliconFlow hosted OpenAI-compatible inference. Many open-source models.'
+  },
+  {
+    id: 'zhongkeyu',
+    label: 'Zhongkeyu (中科云)',
+    group: 'openai-compatible',
+    baseUrl: 'https://zhongkeyu.com/v1',
+    docsUrl: 'https://zhongkeyu.com/docs',
+    requiresApiKey: true,
+    customBaseUrl: true,
+    customModels: true,
+    highTierModels: [],
+    fastTierModels: [],
+    description: 'Zhongkeyu model gateway. Refresh models to see the IDs available to your API token.'
   },
   {
     id: 'kimi',
@@ -298,6 +312,7 @@ const PROVIDER_DISPLAY_ORDER: string[] = [
   'google',
   'deepseek',
   'openrouter',
+  'zhongkeyu',
   'glm',
   'kimi',
   'minimax-global',
@@ -344,8 +359,8 @@ export const PROVIDER_GROUP_ORDER: ProviderGroup[] = [
 /** Resolves the effective base URL the LLM client should call. */
 export function resolveBaseUrl(provider: ProviderDefinition, override?: string): string {
   const trimmed = override?.trim()
-  if (trimmed) return trimmed.replace(/\/$/, '')
-  return provider.baseUrl.replace(/\/$/, '')
+  if (trimmed) return trimmed.replace(/\/+$/, '')
+  return provider.baseUrl.replace(/\/+$/, '')
 }
 
 /** Pick a sensible default high-tier model for a provider. */
@@ -361,7 +376,7 @@ export function defaultFastTierModel(provider: ProviderDefinition): string {
 /** Build the default {@link ModelRef} for a provider's high or fast tier. */
 export function defaultModelRef(provider: ProviderDefinition, tier: 'high' | 'fast'): ModelRef {
   return {
-    provider: provider.id as LLMProvider,
+    provider: provider.id,
     model: tier === 'high' ? defaultHighTierModel(provider) : defaultFastTierModel(provider)
   }
 }
@@ -426,7 +441,7 @@ export function effectiveModelIds(
   provider: ProviderDefinition | undefined,
   account: { selectedModels?: string[]; fetchedModels?: string[] } | undefined
 ): string[] {
-  if (account?.selectedModels?.length) return account.selectedModels
+  if (account?.selectedModels) return account.selectedModels
   if (account?.fetchedModels?.length) return account.fetchedModels
   return presetIds(provider)
 }

@@ -746,6 +746,7 @@ export type LLMProvider =
   | 'deepseek'
   | 'openrouter'
   | 'siliconflow'
+  | 'zhongkeyu'
   | 'minimax-cn'
   | 'minimax-global'
   | 'google'
@@ -793,8 +794,8 @@ export interface ProviderAccountConfig {
   /**
    * Curated subset of {@link fetchedModels} the user enabled for selection on
    * the Providers tab. Only these models are offered on the Model Selection
-   * tab. Empty/undefined falls back to the discovered list, then the catalogue
-   * presets.
+   * tab. An undefined selection uses the discovered list or catalogue presets.
+   * An empty array means the shortlist was explicitly cleared.
    */
   selectedModels?: string[]
 }

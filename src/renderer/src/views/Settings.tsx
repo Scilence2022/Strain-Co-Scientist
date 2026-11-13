@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store/useStore'
 import { IconCheck, IconRefresh } from '../components/Icons'
+import { ProviderSettings, type ModelDiscovery } from './ProviderSettings'
 import {
   AGENT_LABELS,
   type AgentRole,
   type AppSettings,
   type LLMProvider,
   type ModelRef,
+  type ProviderAccountConfig,
   type UiTheme
 } from '@shared/domain'
 import { modelCapabilities } from '@shared/models'
-import type { LlmPingResult, McpTestResult, McpTool, ModelListResult } from '@shared/ipc'
+import type { LlmPingResult, McpTestResult, McpTool, ProviderCredentials, ProviderModelProbe } from '@shared/ipc'
 import {
   PROVIDERS,
   PROVIDERS_ORDERED,
@@ -20,6 +22,7 @@ import {
   effectiveModelIds,
   getProvider,
   modelLabelFor,
+  resolveBaseUrl,
   type ProviderDefinition
 } from '@shared/providers'
 
@@ -57,50 +60,64 @@ function ModelLimitsHint({ model }: { model: string }): JSX.Element {
   )
 }
 
+function credentials(account?: ProviderAccountConfig): ProviderCredentials {
+  return { apiKey: account?.apiKey.trim() ?? '', baseUrl: account?.baseUrl?.trim() || undefined }
+}
+
 export function Settings(): JSX.Element {
   const { settings, setSettings } = useStore()
   const [draft, setDraft] = useState<AppSettings | null>(settings ? structuredClone(settings) : null)
+  const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState<string>()
   const [tab, setTab] = useState<TabKey>('providers')
+  const [providerId, setProviderId] = useState<LLMProvider>(settings?.llm.tiers.fastTier.provider ?? 'anthropic')
   const [tests, setTests] = useState<Record<string, McpTestResult | 'loading'>>({})
-  const [llmTest, setLlmTest] = useState<LlmPingResult | 'loading' | null>(null)
-  const [modelFetch, setModelFetch] = useState<Record<string, ModelListResult | 'loading'>>({})
-
-  // Reset the LLM ping result when the selected tier providers/models change so
-  // stale green badges don't linger.
-  const tierKey = draft
-    ? `${draft.llm.tiers.highTier.provider}:${draft.llm.tiers.highTier.model}|${draft.llm.tiers.fastTier.provider}:${draft.llm.tiers.fastTier.model}`
-    : ''
-  useEffect(() => {
-    setLlmTest(null)
-  }, [tierKey])
+  const [llmTest, setLlmTest] = useState<{ probe: ProviderModelProbe; result: LlmPingResult | 'loading' }>()
+  const [modelFetch, setModelFetch] = useState<ModelDiscovery>({})
+  const requests = useRef(new Map<LLMProvider, symbol>())
 
   if (!draft) return <div className="page">Loading…</div>
 
+  const dirty = JSON.stringify(draft) !== JSON.stringify(settings)
+  const fastTier = draft.llm.tiers.fastTier
+  const fastAccount = draft.llm.providers[fastTier.provider]
+  const fastProbe = { ...fastTier, ...credentials(fastAccount) }
+  const testResult = fastAccount?.enabled && JSON.stringify(llmTest?.probe) === JSON.stringify(fastProbe)
+    ? llmTest?.result ?? null
+    : null
+
   const patch = (fn: (d: AppSettings) => void) => {
-    const next = structuredClone(draft)
-    fn(next)
-    setDraft(next)
+    setDraft((current) => {
+      if (!current) return current
+      const next = structuredClone(current)
+      fn(next)
+      return next
+    })
     setSaved(false)
+    setSaveError(undefined)
   }
 
   const save = async () => {
+    if (saving || !dirty) return
+    setSaving(true)
+    setSaveError(undefined)
     try {
       const result = await window.api.saveSettings(draft)
       setSettings(result)
-      setDraft(structuredClone(result))
+      setDraft((current) => current === draft ? structuredClone(result) : current)
       setSaved(true)
-      setTimeout(() => setSaved(false), 2500)
     } catch (err) {
-      useStore.getState().reportError(err)
+      setSaveError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
     }
   }
 
   const testMcp = async (server: 'deepResearch' | 'codexomics') => {
     setTests((t) => ({ ...t, [server]: 'loading' }))
     try {
-      setSettings(await window.api.saveSettings(draft))
-      const res = await window.api.testMcp(server)
+      const res = await window.api.testMcp(server, draft.mcp[server])
       setTests((t) => ({ ...t, [server]: res }))
     } catch (err) {
       setTests((t) => ({ ...t, [server]: { server, ok: false, message: String(err) } }))
@@ -108,290 +125,103 @@ export function Settings(): JSX.Element {
   }
 
   const testLlm = async () => {
-    setLlmTest('loading')
-    try {
-      setSettings(await window.api.saveSettings(draft))
-      setLlmTest(await window.api.pingLlm())
-    } catch (err) {
-      setLlmTest({ ok: false, message: String(err) })
-    }
+    if (testResult === 'loading') return
+    setLlmTest({ probe: fastProbe, result: 'loading' })
+    const result = await window.api.pingLlm(fastProbe).catch((err: unknown) => ({ ok: false, message: String(err) }))
+    setLlmTest((current) => current?.probe === fastProbe ? { probe: fastProbe, result } : current)
   }
 
-  /** Refresh a provider's available models, persisting credentials + result. */
   const refreshModels = async (id: LLMProvider) => {
+    if (requests.current.has(id)) return
+    const request = Symbol()
+    requests.current.set(id, request)
     setModelFetch((s) => ({ ...s, [id]: 'loading' }))
     try {
-      // Persist current edits so the main process tests with fresh credentials.
-      const persisted = await window.api.saveSettings(draft)
-      setSettings(persisted)
-      const res = await window.api.listProviderModels(id)
+      const res = await window.api.listProviderModels(id, credentials(draft.llm.providers[id]))
+      if (requests.current.get(id) !== request) return
       setModelFetch((s) => ({ ...s, [id]: res }))
-      if (res.ok) {
-        const next = structuredClone(draft)
-        const acct = (next.llm.providers[id] ??= { enabled: true, apiKey: '' })
-        acct.fetchedModels = res.models
-        acct.enabled = true
-        // Keep any still-available prior selection; otherwise seed the default
-        // curated subset (latest few presets, capped).
-        const kept = acct.selectedModels?.filter((m) => res.models.includes(m)) ?? []
-        acct.selectedModels = kept.length ? kept : defaultSelectedModels(getProvider(id), res.models)
-        setDraft(next)
-        const saved2 = await window.api.saveSettings(next)
-        setSettings(saved2)
-      }
+      if (res.ok) mutateAccount(id, (account) => {
+        const available = new Set(res.models)
+        account.fetchedModels = res.models
+        account.selectedModels = account.selectedModels
+          ? account.selectedModels.filter((model) => available.has(model))
+          : defaultSelectedModels(getProvider(id), res.models)
+      })
     } catch (err) {
-      setModelFetch((s) => ({ ...s, [id]: { ok: false, models: [], message: String(err) } }))
+      if (requests.current.get(id) === request) {
+        setModelFetch((s) => ({ ...s, [id]: { ok: false, models: [], message: String(err) } }))
+      }
+    } finally {
+      if (requests.current.get(id) === request) requests.current.delete(id)
     }
   }
 
-  /** Mutate (creating if needed) a provider account in the draft. */
-  const mutateAccount = (id: LLMProvider, fn: (a: NonNullable<AppSettings['llm']['providers'][LLMProvider]>) => void) =>
-    patch((d) => {
-      const a = (d.llm.providers[id] ??= { enabled: false, apiKey: '' })
-      fn(a)
+  const mutateAccount = (id: LLMProvider, fn: (account: ProviderAccountConfig) => void) =>
+    patch((d) => fn(d.llm.providers[id] ??= { enabled: false, apiKey: '' }))
+
+  const changeConnection = (id: LLMProvider, changes: Partial<ProviderCredentials>) => {
+    const provider = getProvider(id)!
+    const account = draft.llm.providers[id]
+    const next = { ...credentials(account), ...changes }
+    const matches = (candidate?: ProviderAccountConfig) =>
+      next.apiKey.trim() === credentials(candidate).apiKey &&
+      resolveBaseUrl(provider, next.baseUrl) === resolveBaseUrl(provider, candidate?.baseUrl)
+    const changed = !matches(account)
+    if (changed) {
+      requests.current.delete(id)
+      setModelFetch((state) => ({ ...state, [id]: undefined }))
+      setLlmTest((current) => current?.probe.provider === id ? undefined : current)
+    }
+    mutateAccount(id, (a) => {
+      Object.assign(a, changes)
+      if (changed) {
+        const persisted = settings?.llm.providers[id]
+        const matchingAccount = matches(persisted) ? persisted : undefined
+        a.fetchedModels = matchingAccount?.fetchedModels
+        a.selectedModels = matchingAccount?.selectedModels
+      }
     })
+  }
 
   return (
-    <div className="page page-narrow col gap-lg">
-      <div className="row">
-        <h2 style={{ fontSize: 'var(--fs-xl)' }}>Settings</h2>
+    <div className="page settings-page col gap-lg">
+      <div className="row wrap gap-sm">
+        <h1>Settings</h1>
         <span className="spacer" />
-        {saved && (
-          <span className="badge ok">
-            <IconCheck size={12} /> Saved
-          </span>
+        {dirty ? <span className="hint" role="status">Unsaved changes</span> : saved && (
+          <span className="badge ok" role="status"><IconCheck size={12} /> Saved</span>
         )}
-        <button className="btn btn-primary" onClick={save}>
-          Save changes
+        <button className="btn btn-primary" onClick={save} disabled={!dirty || saving}>
+          {saving ? 'Saving…' : 'Save changes'}
         </button>
       </div>
 
-      <div className="tabs" role="tablist">
+      {saveError && <p className="form-error" role="alert">{saveError}</p>}
+
+      <div className="tabs" role="tablist" aria-label="Settings sections">
         {TABS.map((t) => (
-          <button
-            key={t.key}
-            role="tab"
-            aria-selected={tab === t.key}
-            className={`tab${tab === t.key ? ' active' : ''}`}
-            onClick={() => setTab(t.key)}
-          >
+          <button key={t.key} role="tab" aria-selected={tab === t.key}
+            className={`tab${tab === t.key ? ' active' : ''}`} onClick={() => setTab(t.key)}>
             {t.label}
           </button>
         ))}
       </div>
 
       {tab === 'providers' && (
-        <ProvidersTab draft={draft} modelFetch={modelFetch} mutateAccount={mutateAccount} onRefresh={refreshModels} />
+        <ProviderSettings llm={draft.llm} activeId={providerId} onSelect={setProviderId} discovery={modelFetch}
+          onConnection={changeConnection}
+          onToggle={(id, enabled) => mutateAccount(id, (account) => { account.enabled = enabled })}
+          onRefresh={refreshModels}
+          onShortlist={(id, models) => mutateAccount(id, (account) => { account.selectedModels = models })}
+          onAssign={(provider, model, tier) => patch((d) => { d.llm.tiers[tier] = { provider, model } })}
+          onOpenModels={() => setTab('models')} />
       )}
       {tab === 'models' && (
-        <ModelsTab draft={draft} patch={patch} llmTest={llmTest} onTest={testLlm} />
+        <ModelsTab draft={draft} patch={patch} llmTest={testResult} onTest={testLlm} />
       )}
       {tab === 'appearance' && <AppearanceTab draft={draft} patch={patch} />}
       {tab === 'engine' && <EngineTab draft={draft} patch={patch} />}
       {tab === 'grounding' && <GroundingTab draft={draft} patch={patch} tests={tests} onTestMcp={testMcp} />}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Providers tab — configure each provider's credentials & discovered models
-// ---------------------------------------------------------------------------
-
-function ProvidersTab({
-  draft,
-  modelFetch,
-  mutateAccount,
-  onRefresh
-}: {
-  draft: AppSettings
-  modelFetch: Record<string, ModelListResult | 'loading'>
-  mutateAccount: (id: LLMProvider, fn: (a: NonNullable<AppSettings['llm']['providers'][LLMProvider]>) => void) => void
-  onRefresh: (id: LLMProvider) => void
-}): JSX.Element {
-  return (
-    <div className="col gap-md">
-      <p className="faint" style={{ fontSize: 'var(--fs-sm)', margin: 0 }}>
-        Enable the providers you want to use and add their credentials. Use <strong>Refresh models</strong> to fetch each
-        provider's live model list — those models then become selectable on the Model Selection tab.
-      </p>
-      {PROVIDERS_ORDERED.map((provider) => (
-        <div key={provider.id} className="card pad-lg">
-          <ProviderCard
-            provider={provider}
-            account={draft.llm.providers[provider.id as LLMProvider]}
-            fetchState={modelFetch[provider.id]}
-            onToggle={(v) => mutateAccount(provider.id as LLMProvider, (a) => (a.enabled = v))}
-            onKey={(v) => mutateAccount(provider.id as LLMProvider, (a) => (a.apiKey = v))}
-            onUrl={(v) => mutateAccount(provider.id as LLMProvider, (a) => (a.baseUrl = v || undefined))}
-            onSelectModels={(ids) => mutateAccount(provider.id as LLMProvider, (a) => (a.selectedModels = ids))}
-            onRefresh={() => onRefresh(provider.id as LLMProvider)}
-          />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function ProviderCard({
-  provider,
-  account,
-  fetchState,
-  onToggle,
-  onKey,
-  onUrl,
-  onSelectModels,
-  onRefresh
-}: {
-  provider: ProviderDefinition
-  account: AppSettings['llm']['providers'][LLMProvider]
-  fetchState?: ModelListResult | 'loading'
-  onToggle: (v: boolean) => void
-  onKey: (v: string) => void
-  onUrl: (v: string) => void
-  onSelectModels: (ids: string[]) => void
-  onRefresh: () => void
-}): JSX.Element {
-  const enabled = account?.enabled ?? false
-  return (
-    <div>
-      <div className="row" style={{ alignItems: 'center' }}>
-        <label className="checkbox-row" style={{ fontWeight: 600 }}>
-          <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked)} />
-          {provider.label}
-        </label>
-        <span className="spacer" />
-        <button className="btn btn-sm" onClick={onRefresh} disabled={fetchState === 'loading'}>
-          <IconRefresh size={13} /> {fetchState === 'loading' ? 'Refreshing…' : 'Refresh models'}
-        </button>
-      </div>
-      <p className="hint" style={{ marginTop: 4, marginBottom: enabled ? 12 : 0 }}>
-        {provider.description}
-      </p>
-      {enabled && (
-        <>
-          <div className="grid grid-2">
-            <div className="field">
-              <label>
-                API key
-                {provider.envHint && (
-                  <span className="hint" style={{ marginLeft: 6 }}>
-                    ({provider.envHint})
-                  </span>
-                )}
-              </label>
-              <input
-                type="password"
-                value={account?.apiKey ?? ''}
-                onChange={(e) => onKey(e.target.value)}
-                placeholder={provider.requiresApiKey === false ? 'optional' : 'sk-…'}
-              />
-              {provider.requiresApiKey === false && (
-                <span className="hint">Optional for local servers without auth.</span>
-              )}
-            </div>
-            <div className="field">
-              <label>Base URL</label>
-              <div className="row" style={{ gap: 6 }}>
-                <input
-                  value={account?.baseUrl ?? ''}
-                  onChange={(e) => onUrl(e.target.value)}
-                  placeholder={provider.baseUrl || 'https://your-endpoint/v1'}
-                />
-                {provider.baseUrl && (
-                  <button type="button" className="btn btn-sm" title="Reset to provider default" onClick={() => onUrl('')}>
-                    Reset
-                  </button>
-                )}
-              </div>
-              {provider.baseUrl && <span className="hint">Default: {provider.baseUrl}</span>}
-            </div>
-          </div>
-          {fetchState && fetchState !== 'loading' && (
-            <div
-              className={`badge ${fetchState.ok ? 'ok' : 'err'}`}
-              style={{ display: 'inline-flex', marginBottom: fetchState.ok ? 10 : 0 }}
-            >
-              {fetchState.ok ? `Connected · ${fetchState.models.length} models` : `Failed: ${fetchState.message}`}
-            </div>
-          )}
-          {account?.fetchedModels?.length ? (
-            <ModelPicker
-              provider={provider}
-              fetched={account.fetchedModels}
-              selected={account.selectedModels ?? []}
-              onChange={onSelectModels}
-            />
-          ) : (
-            <span className="hint" style={{ display: 'block', marginTop: 4 }}>
-              Refresh to load this provider's live model list, or type a custom model id on the Model Selection tab.
-            </span>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
-function ModelPicker({
-  provider,
-  fetched,
-  selected,
-  onChange
-}: {
-  provider: ProviderDefinition
-  fetched: string[]
-  selected: string[]
-  onChange: (ids: string[]) => void
-}): JSX.Element {
-  const [filter, setFilter] = useState('')
-  const selSet = new Set(selected)
-  const needle = filter.trim().toLowerCase()
-  const shown = needle ? fetched.filter((id) => id.toLowerCase().includes(needle)) : fetched
-
-  const toggle = (id: string) => {
-    onChange(selSet.has(id) ? selected.filter((x) => x !== id) : [...selected, id])
-  }
-
-  return (
-    <div className="model-picker">
-      <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-        <span className="hint">
-          {selected.length} of {fetched.length} models selected for use
-        </span>
-        <span className="spacer" />
-        <button type="button" className="btn btn-sm" onClick={() => onChange(defaultSelectedModels(provider, fetched))}>
-          Latest {Math.min(5, fetched.length)}
-        </button>
-        <button type="button" className="btn btn-sm" onClick={() => onChange([...fetched])}>
-          Select all
-        </button>
-        <button type="button" className="btn btn-sm" onClick={() => onChange([])}>
-          Clear
-        </button>
-      </div>
-      <input
-        className="model-filter"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        placeholder={`Filter ${fetched.length} models…`}
-      />
-      <div className="model-checklist">
-        {shown.map((id) => {
-          const label = modelLabelFor(provider, id)
-          return (
-            <label key={id} className="model-check">
-              <input type="checkbox" checked={selSet.has(id)} onChange={() => toggle(id)} />
-              <span className="model-check-id">{id}</span>
-              {label !== id && <span className="model-check-label">{label}</span>}
-            </label>
-          )
-        })}
-        {shown.length === 0 && (
-          <span className="hint" style={{ padding: '8px 10px' }}>
-            No models match “{filter}”.
-          </span>
-        )}
-      </div>
     </div>
   )
 }
@@ -415,17 +245,17 @@ function ModelsTab({
   // referenced by a tier/override (so an existing selection never disappears).
   const selectable = useMemo<ProviderDefinition[]>(() => {
     const ids = new Set<LLMProvider>()
-    for (const p of PROVIDERS) if (draft.llm.providers[p.id as LLMProvider]?.enabled) ids.add(p.id as LLMProvider)
+    for (const p of PROVIDERS) if (draft.llm.providers[p.id]?.enabled) ids.add(p.id)
     ids.add(draft.llm.tiers.highTier.provider)
     ids.add(draft.llm.tiers.fastTier.provider)
     for (const a of OVERRIDABLE) {
       const r = draft.llm.overrides[a]
       if (r) ids.add(r.provider)
     }
-    return PROVIDERS_ORDERED.filter((p) => ids.has(p.id as LLMProvider))
+    return PROVIDERS_ORDERED.filter((p) => ids.has(p.id))
   }, [draft])
 
-  const noneEnabled = !PROVIDERS.some((p) => draft.llm.providers[p.id as LLMProvider]?.enabled)
+  const noneEnabled = !PROVIDERS.some((p) => draft.llm.providers[p.id]?.enabled)
 
   return (
     <div className="col gap-lg">
@@ -433,8 +263,9 @@ function ModelsTab({
         <div className="row" style={{ marginBottom: 14 }}>
           <div className="card-title">Tier models</div>
           <span className="spacer" />
-          <button className="btn btn-sm" onClick={onTest} disabled={llmTest === 'loading'}>
-            <IconRefresh size={13} /> {llmTest === 'loading' ? 'Testing…' : 'Test connection'}
+          <button className="btn btn-sm" onClick={onTest} disabled={llmTest === 'loading' ||
+            !draft.llm.providers[draft.llm.tiers.fastTier.provider]?.enabled || !draft.llm.tiers.fastTier.model.trim()}>
+            <IconRefresh size={13} /> {llmTest === 'loading' ? 'Testing…' : 'Test fast-tier model'}
           </button>
         </div>
         {noneEnabled && (
@@ -564,7 +395,7 @@ function ModelRefField({
   onChange: (ref: ModelRef) => void
   onClear?: () => void
 }): JSX.Element {
-  const isOverride = !!onClear
+  const isOverride = placeholder !== undefined
   // For overrides with no committed model, the provider is held locally so the
   // dropdown doesn't snap back to the tier default before a model is picked.
   const [prov, setProv] = useState<LLMProvider>(value.provider)
@@ -590,8 +421,10 @@ function ModelRefField({
       return
     }
     const next = effectiveModelIds(def, accounts[id])
-    const fallback = def ? (defaultTier === 'high' ? defaultHighTierModel(def) : defaultFastTierModel(def)) : ''
-    onChange({ provider: id, model: next[0] ?? fallback })
+    const preferred = def ? (defaultTier === 'high' ? defaultHighTierModel(def) : defaultFastTierModel(def)) : ''
+    const model = next.includes(preferred) ? preferred : next[0] ?? ''
+    if (!model && def?.customModels) setCustom(true)
+    onChange({ provider: id, model })
   }
 
   const changeModel = (v: string) => {

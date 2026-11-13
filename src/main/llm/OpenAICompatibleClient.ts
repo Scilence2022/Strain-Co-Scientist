@@ -38,8 +38,12 @@ export class OpenAICompatibleClient implements LLMClient {
     const model = req.model ?? ''
     // Adaptive output budget: clamp to the model's real max-output ceiling
     // (e.g. DeepSeek V4 emits up to 384K tokens, far above Claude's 128K).
+    const isZhongkeyuFlash = this.cfg.provider === 'zhongkeyu' && model === 'deepseek-v4.1-flash'
     const body = {
       model,
+      // The gateway enables thinking by default, which can consume the entire
+      // output budget before a bounded planning or review request returns JSON.
+      ...(isZhongkeyuFlash ? { thinking: { type: 'disabled' }, reasoning_effort: 'none' } : {}),
       max_tokens: resolveMaxOutputTokens(model, req.maxTokens ?? this.cfg.maxTokensFallback),
       temperature: this.cfg.temperature,
       messages: [

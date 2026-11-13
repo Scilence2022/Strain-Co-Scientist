@@ -143,9 +143,16 @@ GitHub Actions runs `npm run check` on pushes and pull requests. These checks us
 mock providers and temporary data directories; they do not validate scientific
 claims or replace a live integration test with your configured LLM/MCP servers.
 
-The agents call a live LLM. Open **Settings**, add an Anthropic API key (and,
-optionally, the deep-research / CodeXomics MCP servers for grounding) before
-running a campaign.
+Before running a campaign, open **Settings → Providers**, select a provider,
+enter its credentials and enable it. **Refresh models** reads the account's
+catalog using the current key and Base URL. Search the catalog, shortlist IDs
+for **Model Selection**, or enter a model ID directly and set it for the high
+or fast tier. **Save changes** applies the provider and routing settings.
+Connection tests and model discovery work with the draft.
+
+For **Zhongkeyu (中科云)**, use a token from its dashboard. The preset uses
+`https://zhongkeyu.com/v1`. Select a chat model ID available to your token.
+See the [Zhongkeyu API documentation](https://zhongkeyu.com/docs).
 
 ---
 

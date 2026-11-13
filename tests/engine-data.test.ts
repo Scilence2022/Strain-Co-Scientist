@@ -27,6 +27,7 @@ async function setup(status: StrainDesign['status'] = 'active') {
   return { engine, events, snap }
 }
 afterEach(async () => {
+  vi.unstubAllGlobals()
   for (const { engine, root } of active.splice(0)) {
     await engine.shutdown()
     await rm(root, { recursive: true, force: true })
@@ -133,6 +134,27 @@ describe('campaign data consistency', () => {
     expect(reloadedSnapshot.campaign.engineering?.selectedPathwayId).toBeUndefined()
     expect(reloadedSnapshot.designs.find((entry) => entry.id === scoped.id)?.engineeringScope?.pathway?.id).toBe(pathway.id)
     expect(reloadedSnapshot.results[0]).toMatchObject({ targetId, status: 'recorded' })
+  })
+
+  it('discovers models and tests a draft route without saving settings', async () => {
+    const { engine } = await setup()
+    const saved = engine.getSettings()
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(new Response('{"data":[{"id":"fixture-chat"}]}'))
+      .mockResolvedValueOnce(new Response('{"choices":[{"message":{"content":"ready"}}]}'))
+    vi.stubGlobal('fetch', fetch)
+    const draft = { apiKey: 'fixture-token', baseUrl: 'https://example.test/v1' }
+    await expect(engine.listProviderModels('zhongkeyu', draft)).resolves.toMatchObject({
+      ok: true, models: ['fixture-chat']
+    })
+    await expect(engine.pingLlm({ ...draft, provider: 'zhongkeyu', model: 'fixture-chat' })).resolves.toMatchObject({
+      ok: true, model: 'fixture-chat'
+    })
+    expect(engine.getSettings()).toEqual(saved)
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      'https://example.test/v1/models',
+      'https://example.test/v1/chat/completions'
+    ])
   })
 
 })

@@ -8,9 +8,9 @@ import { ENGINE_EVENT_CHANNEL, type EngineEvent, type PreloadBridge } from '@sha
 const api: PreloadBridge = {
   getSettings: () => ipcRenderer.invoke('getSettings'),
   saveSettings: (settings) => ipcRenderer.invoke('saveSettings', settings),
-  testMcp: (server) => ipcRenderer.invoke('testMcp', server),
-  pingLlm: () => ipcRenderer.invoke('pingLlm'),
-  listProviderModels: (provider) => ipcRenderer.invoke('listProviderModels', provider),
+  testMcp: (...args) => ipcRenderer.invoke('testMcp', ...args),
+  pingLlm: (...args) => ipcRenderer.invoke('pingLlm', ...args),
+  listProviderModels: (...args) => ipcRenderer.invoke('listProviderModels', ...args),
 
   regenerateOverview: (id) => ipcRenderer.invoke('regenerateOverview', id),
 

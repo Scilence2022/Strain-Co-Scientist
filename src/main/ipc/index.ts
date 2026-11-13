@@ -33,9 +33,9 @@ export function registerIpc(engine: Engine, isTrusted: (event: IpcMainInvokeEven
   const handlers: Record<IpcApiChannel, (...args: any[]) => unknown> = {
     getSettings: () => engine.getSettings(),
     saveSettings: (settings) => engine.saveSettings(settings),
-    testMcp: (server) => engine.testMcp(server),
-    pingLlm: () => engine.pingLlm(),
-    listProviderModels: (provider) => engine.listProviderModels(provider),
+    testMcp: (server, draft) => engine.testMcp(server, draft),
+    pingLlm: (draft) => engine.pingLlm(draft),
+    listProviderModels: (provider, draft) => engine.listProviderModels(provider, draft),
 
     regenerateOverview: (id) => engine.regenerateOverview(id),
 
