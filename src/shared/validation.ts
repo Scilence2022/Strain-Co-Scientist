@@ -31,6 +31,9 @@ const httpUrl = z.string().max(4096).refine((value) => {
   catch { return false }
 }, 'Expected an HTTP or HTTPS URL without embedded credentials')
 const optionalUrl = z.union([httpUrl, z.literal('')]).optional()
+export const providerCredentialsSchema = z.object({ apiKey: text.trim(), baseUrl: optionalUrl })
+const providerModelProbe = model.merge(providerCredentialsSchema)
+const mcpServer = z.enum(['deepResearch', 'codexomics'])
 const server = z.object({ enabled: z.boolean(), url: z.union([httpUrl, z.literal('')]), accessToken: text.optional() })
   .refine((value) => !value.enabled || !!value.url, 'An enabled server needs a URL')
 
@@ -121,7 +124,9 @@ const result = z.object({
 /** Validate every renderer request at the privileged-process boundary. */
 export const ipcArguments: Record<IpcApiChannel, z.ZodTypeAny> = {
   getSettings: z.tuple([]), saveSettings: z.tuple([settingsSchema]),
-  testMcp: z.tuple([z.enum(['deepResearch', 'codexomics'])]), pingLlm: z.tuple([]), listProviderModels: z.tuple([provider]),
+  testMcp: z.union([z.tuple([mcpServer]), z.tuple([mcpServer, server])]),
+  pingLlm: z.union([z.tuple([]), z.tuple([providerModelProbe])]),
+  listProviderModels: z.union([z.tuple([provider]), z.tuple([provider, providerCredentialsSchema])]),
   listCampaigns: z.tuple([]), createCampaign: z.tuple([campaignInputSchema]), deleteCampaign: z.tuple([id]), getSnapshot: z.tuple([id]),
   updateTournamentConfig: z.tuple([id, tournamentConfigSchema]),
   suggestEngineeringOptions: z.tuple([id, z.enum(['hosts', 'pathways'])]),

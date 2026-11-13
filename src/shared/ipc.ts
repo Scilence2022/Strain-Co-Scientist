@@ -19,6 +19,9 @@ import type {
   Match,
   TournamentConfig,
   LLMProvider,
+  McpServerConfig,
+  ModelRef,
+  ProviderAccountConfig,
   ExperimentalResult,
   CalibrationProfile,
   ResultOutcome,
@@ -84,6 +87,11 @@ export interface McpTestResult {
   tools?: McpTool[]
 }
 
+/** Credentials for a read-only provider request against the Settings draft. */
+export type ProviderCredentials = Pick<ProviderAccountConfig, 'apiKey' | 'baseUrl'>
+
+export type ProviderModelProbe = ModelRef & ProviderCredentials
+
 /** Result of pinging the configured LLM provider. */
 export interface LlmPingResult {
   ok: boolean
@@ -131,10 +139,10 @@ export interface IpcApi {
   // Settings
   getSettings(): Promise<AppSettings>
   saveSettings(settings: AppSettings): Promise<AppSettings>
-  testMcp(server: 'deepResearch' | 'codexomics'): Promise<McpTestResult>
-  pingLlm(): Promise<LlmPingResult>
-  /** Refresh a provider's available models using its saved credentials. */
-  listProviderModels(provider: LLMProvider): Promise<ModelListResult>
+  testMcp(server: 'deepResearch' | 'codexomics', draft?: McpServerConfig): Promise<McpTestResult>
+  pingLlm(draft?: ProviderModelProbe): Promise<LlmPingResult>
+  /** Discover models for the supplied credentials, falling back to saved credentials. */
+  listProviderModels(provider: LLMProvider, draft?: ProviderCredentials): Promise<ModelListResult>
 
   // Research overview
   regenerateOverview(campaignId: string): Promise<OverviewGenResult>

@@ -16,7 +16,7 @@ export function clientConfig(settings: AppSettings, provider: LLMProvider): Clie
   const override = account?.baseUrl?.trim()
   return {
     provider,
-    apiKey: account?.apiKey ?? '',
+    apiKey: account?.apiKey.trim() ?? '',
     baseUrl: override || def?.baseUrl || undefined,
     temperature: settings.llm.temperature,
     maxTokensFallback: settings.llm.maxTokens
